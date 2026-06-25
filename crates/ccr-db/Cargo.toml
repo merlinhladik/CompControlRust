@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "ccr-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Postgres access via sqlx. Schema is OWNED here once edv is retired; until then
+# this crate must match edv/db_init/1_schema.sql + edv/alembic exactly (see CLAUDE.md).
+[dependencies]
+sqlx = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+ccr-domain = { path = "../ccr-domain" }

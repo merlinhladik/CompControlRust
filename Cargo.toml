@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[workspace]
+resolver = "2"
+members = [
+    "crates/ccr-server",
+    "crates/ccr-domain",
+    "crates/ccr-db",
+    "crates/ccr-excel",
+    "crates/ccr-frontend",
+]
+# Backend builds/tests for the host target; the WASM frontend is built by Trunk
+# for wasm32 separately, so keep it out of the default host build.
+default-members = [
+    "crates/ccr-server",
+    "crates/ccr-domain",
+    "crates/ccr-db",
+    "crates/ccr-excel",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "GPL-3.0-or-later"
+authors = ["Merlin <merlin-h@gmx.de>"]
+
+# Shared dependency versions — pin once, inherit per-crate with `.workspace = true`.
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "macros", "chrono", "rust_decimal", "migrate", "json"] }
+rust_decimal = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "2"
+calamine = "0.26"          # read .xlsx / legacy .xls (BIFF)
+rust_xlsxwriter = "0.79"   # write .xlsx
+csv = "1"                  # contestants_*.csv exchange format
+printpdf = "0.7"           # pure-Rust PDF (printable, hand-fillable forms)
+chrono = { version = "0.4", features = ["serde"] }
+# Frontend (Rust/WASM). Exact SSR/hydrate wiring via cargo-leptos at Phase 3.
+leptos = "0.7"
+leptos_axum = "0.7"
+leptos_meta = "0.7"
+leptos_router = "0.7"

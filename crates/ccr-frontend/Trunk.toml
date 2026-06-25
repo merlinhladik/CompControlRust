@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: CC0-1.0
+[build]
+# Emit into crates/ccr-frontend/dist; ccr-server serves this via ServeDir.
+dist = "dist"
+
+[serve]
+# `trunk serve` proxies API+WS to ccr-server during dev (optional convenience).
+port = 8080

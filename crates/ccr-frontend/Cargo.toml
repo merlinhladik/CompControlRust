@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "ccr-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Leptos CSR (Rust/WASM) web UI, built by Trunk for wasm32-unknown-unknown.
+# Phase 3: live mat-list view (fetch /api/matches + live WS /ws). Served by
+# ccr-server (tower-http ServeDir). Admin views + bracket tree come later.
+[dependencies]
+leptos = { version = "0.7", features = ["csr"] }
+gloo-net = "0.6"             # fetch + websocket for WASM
+futures = "0.3"             # StreamExt for the WS loop
+wasm-bindgen-futures = "0.4"
+gloo-file = { version = "0.3", features = ["futures"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+web-sys = { version = "0.3", features = ["Location", "Window", "HtmlInputElement", "FileList", "File"] }

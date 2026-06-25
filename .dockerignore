@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: CC0-1.0
+# Keep the build context small + force a clean frontend/backend build in-image.
+target/
+crates/*/dist/
+.git/
+.env
+*.log

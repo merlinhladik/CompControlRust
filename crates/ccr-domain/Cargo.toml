@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "ccr-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Pure logic. NO db, NO http, NO io. Brackets, pools, standings, repechage.
+# This is the crown jewel — port last, port with the oracle tests as a net.
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

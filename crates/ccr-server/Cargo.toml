@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "ccr-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The unified web server: replaces JF FastAPI (HTTP + WS) AND edv's Tkinter GUI
+# (now served as a web frontend). Thin layer — all logic lives in the other crates.
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+ccr-domain = { path = "../ccr-domain" }
+ccr-db = { path = "../ccr-db" }
+ccr-excel = { path = "../ccr-excel" }
