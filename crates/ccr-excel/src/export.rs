@@ -26,6 +26,10 @@ pub struct UrkundeRow {
     pub nachname: String,
     pub platz: String,
     pub klasse: String,
+    /// age class alone ("U11", "U18")
+    pub altersklasse: String,
+    /// weight class OR youth pool label ("-81kg", "Pool 2")
+    pub gewichtsklasse: String,
     pub verein: String,
 }
 
@@ -107,9 +111,9 @@ pub fn results_xlsx(rows: &[ResultRow]) -> Result<Vec<u8>, XlsxError> {
 /// comma-delimited, UTF-8, header = the merge field names. One row per placement.
 pub fn urkunden_csv(rows: &[UrkundeRow]) -> Result<String, csv::Error> {
     let mut w = csv::Writer::from_writer(vec![]);
-    w.write_record(["vorname", "nachname", "platz", "klasse", "verein"])?;
+    w.write_record(["vorname", "nachname", "platz", "klasse", "altersklasse", "gewichtsklasse", "verein"])?;
     for r in rows {
-        w.write_record([&r.vorname, &r.nachname, &r.platz, &r.klasse, &r.verein])?;
+        w.write_record([&r.vorname, &r.nachname, &r.platz, &r.klasse, &r.altersklasse, &r.gewichtsklasse, &r.verein])?;
     }
     Ok(String::from_utf8(w.into_inner().expect("csv writer")).expect("utf8"))
 }
@@ -119,7 +123,7 @@ pub fn urkunden_xlsx(rows: &[UrkundeRow]) -> Result<Vec<u8>, XlsxError> {
     let mut wb = Workbook::new();
     let ws = wb.add_worksheet().set_name("Urkunden")?;
     let bold = Format::new().set_bold();
-    for (c, h) in ["vorname", "nachname", "platz", "klasse", "verein"].iter().enumerate() {
+    for (c, h) in ["vorname", "nachname", "platz", "klasse", "altersklasse", "gewichtsklasse", "verein"].iter().enumerate() {
         ws.write_with_format(0, c as u16, *h, &bold)?;
     }
     for (i, row) in rows.iter().enumerate() {
@@ -128,7 +132,9 @@ pub fn urkunden_xlsx(rows: &[UrkundeRow]) -> Result<Vec<u8>, XlsxError> {
         ws.write(r, 1, row.nachname.as_str())?;
         ws.write(r, 2, row.platz.as_str())?;
         ws.write(r, 3, row.klasse.as_str())?;
-        ws.write(r, 4, row.verein.as_str())?;
+        ws.write(r, 4, row.altersklasse.as_str())?;
+        ws.write(r, 5, row.gewichtsklasse.as_str())?;
+        ws.write(r, 6, row.verein.as_str())?;
     }
     wb.save_to_buffer()
 }
@@ -143,9 +149,11 @@ mod tests {
     fn urkunden_xlsx_roundtrips_via_calamine() {
         let rows = vec![
             UrkundeRow { vorname: "Anna".into(), nachname: "Adler".into(), platz: "1.".into(),
-                         klasse: "w | U15 | -52kg".into(), verein: "JC Berlin".into() },
+                         klasse: "w | U15 | -52kg".into(), altersklasse: "U15".into(),
+                         gewichtsklasse: "-52kg".into(), verein: "JC Berlin".into() },
             UrkundeRow { vorname: "Bea".into(), nachname: "Berger".into(), platz: "2.".into(),
-                         klasse: "w | U15 | -52kg".into(), verein: "JC Köln".into() },
+                         klasse: "w | U15 | -52kg".into(), altersklasse: "U15".into(),
+                         gewichtsklasse: "-52kg".into(), verein: "JC Köln".into() },
         ];
         let bytes = urkunden_xlsx(&rows).unwrap();
         assert!(bytes.len() > 100);
@@ -155,18 +163,21 @@ mod tests {
         assert_eq!(range.get((0, 0)).unwrap().to_string(), "vorname");
         assert_eq!(range.get((1, 0)).unwrap().to_string(), "Anna");
         assert_eq!(range.get((1, 2)).unwrap().to_string(), "1.");
-        assert_eq!(range.get((2, 4)).unwrap().to_string(), "JC Köln");
+        assert_eq!(range.get((1, 4)).unwrap().to_string(), "U15");
+        assert_eq!(range.get((1, 5)).unwrap().to_string(), "-52kg");
+        assert_eq!(range.get((2, 6)).unwrap().to_string(), "JC Köln");
     }
 
     #[test]
     fn urkunden_csv_is_merge_ready() {
         let rows = vec![UrkundeRow {
             vorname: "Anna".into(), nachname: "Adler, jr".into(), platz: "1.".into(),
-            klasse: "w | U15 | -52kg".into(), verein: "JC Berlin".into(),
+            klasse: "w | U15 | -52kg".into(), altersklasse: "U15".into(),
+            gewichtsklasse: "-52kg".into(), verein: "JC Berlin".into(),
         }];
         let csv = urkunden_csv(&rows).unwrap();
         let mut lines = csv.lines();
-        assert_eq!(lines.next().unwrap(), "vorname,nachname,platz,klasse,verein");
+        assert_eq!(lines.next().unwrap(), "vorname,nachname,platz,klasse,altersklasse,gewichtsklasse,verein");
         // comma in a field is quoted (valid CSV for data merge).
         assert!(lines.next().unwrap().contains("\"Adler, jr\""));
     }

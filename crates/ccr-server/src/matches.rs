@@ -115,6 +115,7 @@ pub async fn get_matches(State(st): State<AppState>) -> Result<Json<Value>, AppE
     // full KO/repechage tree as TBD rows, then propagate already-decided WB byes.
     reconcile::eager_materialize(&st.pool).await?;
     reconcile::resolve_pending_byes(&st.pool).await?;
+    reconcile::resolve_lb_byes(&st.pool).await?;
 
     let all = fights::all_fights(&st.pool).await?;
 

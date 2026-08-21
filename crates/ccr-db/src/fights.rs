@@ -458,6 +458,31 @@ pub async fn close_as_bye(pool: &PgPool, id: i32) -> Result<(), sqlx::Error> {
 }
 
 /// REORDER: write new fight_number per match id. JF main.py:620-621.
+
+/// Re-seed: apply a gp permutation to every participant/winner reference of a
+/// bracket in one pass per column (slot structure, schedule and fight numbers
+/// stay untouched). `olds[i]` is replaced by `news[i]`.
+pub async fn remap_participants(
+    pool: &PgPool,
+    bracket_id: i32,
+    olds: &[i32],
+    news: &[i32],
+) -> Result<(), sqlx::Error> {
+    for col in ["participant1_id", "participant2_id", "winner_id"] {
+        sqlx::query(&format!(
+            "UPDATE fights SET {col} = m.new FROM \
+             (SELECT unnest($2::int4[]) AS old, unnest($3::int4[]) AS new) m \
+             WHERE bracket_id=$1 AND {col} = m.old"
+        ))
+        .bind(bracket_id)
+        .bind(olds)
+        .bind(news)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn reorder(pool: &PgPool, orders: &[(i32, i32)]) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     for &(match_id, order) in orders {

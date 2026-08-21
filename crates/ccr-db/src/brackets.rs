@@ -123,6 +123,32 @@ pub async fn needing_brackets(
 
 /// Reset a bracket for regeneration: clear type/placements, status back to
 /// 'pending'. (Caller deletes the fights and re-runs generation.)
+
+/// Manual placement write (paper-result entry): set all four places + status.
+pub async fn set_places(
+    pool: &PgPool,
+    id: i32,
+    first: Option<i32>,
+    second: Option<i32>,
+    third_1: Option<i32>,
+    third_2: Option<i32>,
+    status: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE brackets SET first_place=$1, second_place=$2, third_place_1=$3, \
+             third_place_2=$4, status=$5 WHERE id=$6",
+    )
+    .bind(first)
+    .bind(second)
+    .bind(third_1)
+    .bind(third_2)
+    .bind(status)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn reset(pool: &PgPool, id: i32) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE brackets SET bracket_type=NULL, status='pending', \

@@ -20,6 +20,7 @@ pub use sqlx::Error as DbError;
 
 pub mod models;
 pub mod app_config;
+pub mod clubs;
 pub mod groups;
 pub mod participants;
 pub mod fights;

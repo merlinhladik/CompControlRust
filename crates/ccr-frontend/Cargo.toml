@@ -16,4 +16,4 @@ wasm-bindgen-futures = "0.4"
 gloo-file = { version = "0.3", features = ["futures"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-web-sys = { version = "0.3", features = ["Location", "Window", "HtmlInputElement", "FileList", "File"] }
+web-sys = { version = "0.3", features = ["Location", "Window", "HtmlInputElement", "HtmlIFrameElement", "FileList", "File", "DragEvent", "DataTransfer"] }

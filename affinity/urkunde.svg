@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Urkunde overlay for PRE-PRINTED certificate forms. A4 portrait, merge
+     fields only — no decoration. Adjust the y positions to the printed form;
+     coordinates are mm (viewBox unit = 1 mm).
+     «token» placeholders match GET /api/export/urkunden.csv:
+     vorname, nachname, platz, klasse, altersklasse, gewichtsklasse, verein.
+     «platz» already contains the dot ("1."). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
+  <text x="105" y="125" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="9.5" font-weight="bold" fill="#111111">«vorname» «nachname»</text>
+  <text x="105" y="136" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="4.8" fill="#111111">«verein»</text>
+  <text x="105" y="160" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="4.8" fill="#111111">«altersklasse» «gewichtsklasse»</text>
+  <text x="105" y="182" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="10.5" font-weight="bold" fill="#111111">«platz» Platz</text>
+</svg>

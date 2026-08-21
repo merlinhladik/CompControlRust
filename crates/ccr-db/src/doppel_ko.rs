@@ -210,7 +210,10 @@ pub async fn finalize_graph(
         medal_fights.push(f);
     }
 
-    let second = if Some(final_winner) == final_fight.participant2_id {
+    // walkover final (p1==p2): there IS no second finalist
+    let second = if final_fight.participant1_id == final_fight.participant2_id {
+        None
+    } else if Some(final_winner) == final_fight.participant2_id {
         final_fight.participant1_id
     } else {
         final_fight.participant2_id
@@ -274,7 +277,10 @@ pub async fn finalize(
         return Ok(None);
     }
 
-    let second = if Some(final_winner) == wb_final.participant2_id {
+    // walkover final (p1==p2): there IS no second finalist
+    let second = if wb_final.participant1_id == wb_final.participant2_id {
+        None
+    } else if Some(final_winner) == wb_final.participant2_id {
         wb_final.participant1_id
     } else {
         wb_final.participant2_id

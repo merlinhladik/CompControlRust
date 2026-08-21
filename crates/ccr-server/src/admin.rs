@@ -7,14 +7,14 @@ use std::collections::HashMap;
 
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::Response,
     Json,
 };
 use serde_json::{json, Value};
 
-use ccr_db::{app_config, brackets, fights, groups, locks, participants};
+use ccr_db::{app_config, brackets, clubs, fights, groups, locks, participants};
 use ccr_db::app_config::{AppConfig, BirthYearRow, MethodRange, WeightClassDef};
 use ccr_db::participants::{ParticipantEdit, ParticipantUpsert};
 use ccr_domain::{ko, pools};
@@ -68,8 +68,8 @@ fn parse_edit(b: &Value) -> ParticipantEdit {
         weight_kg: num("weight"),
         club: s("club"),
         association: s("association"),
-        valid: b.get("valid").and_then(|v| v.as_bool()).unwrap_or(false),
-        paid: b.get("paid").and_then(|v| v.as_bool()).unwrap_or(false),
+        valid: b.get("valid").and_then(|v| v.as_bool()).unwrap_or(true),
+        paid: b.get("paid").and_then(|v| v.as_bool()).unwrap_or(true),
         doublestart: norm_doublestart(if ds.is_empty() { "nein" } else { &ds }),
     }
 }
@@ -110,15 +110,15 @@ pub async fn list_brackets(State(st): State<AppState>) -> Result<Json<Value>, Ap
     let out: Vec<Value> = summaries
         .iter()
         .map(|s| {
-            let cat = [s.gender.as_deref(), s.age_group.as_deref(), s.weight_class.as_deref()]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" ");
             json!({
                 "id": s.id,
                 "groupName": s.group_name,
-                "category": cat,
+                // the group name is the full label incl. youth pool number
+                // ("m | U15 | -40kg", "U11 | Pool 2") — same header as the print
+                "category": s.group_name,
+                "gender": s.gender,
+                "ageGroup": s.age_group,
+                "weightClass": s.weight_class,
                 "bracketType": s.bracket_type,
                 "status": s.status,
                 "first": name(s.first_place),
@@ -145,6 +145,21 @@ pub async fn import_contestants(
     }
     .map_err(|e| AppError::status(StatusCode::BAD_REQUEST, format!("parse error: {e}")))?;
 
+    // Trust boundary: a wrong file (e.g. a Meldeliste export) parses "tolerantly"
+    // into rows with empty names — never import those.
+    let total = parsed.len();
+    let parsed: Vec<_> = parsed
+        .into_iter()
+        .filter(|c| !c.firstname.trim().is_empty() && !c.lastname.trim().is_empty())
+        .collect();
+    let skipped = total - parsed.len();
+    if parsed.is_empty() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "keine gültigen Datensätze — falsches Dateiformat? (erwartet contestants-JSON/-CSV)".into(),
+        ));
+    }
+
     let (mut created, mut updated) = (0u32, 0u32);
     for c in &parsed {
         let up = ParticipantUpsert {
@@ -155,8 +170,9 @@ pub async fn import_contestants(
             weight_kg: c.weight,
             club: c.club.clone(),
             association: c.association.clone(),
-            valid: c.valid.unwrap_or(false),
-            paid: c.paid.unwrap_or(false),
+            // Default = gültig/bezahlt; only an explicit false in the file wins.
+            valid: c.valid.unwrap_or(true),
+            paid: c.paid.unwrap_or(true),
             doublestart: norm_doublestart(c.doublestart.as_deref().unwrap_or("standard")),
         };
         if participants::upsert(&st.pool, up).await? {
@@ -165,7 +181,72 @@ pub async fn import_contestants(
             updated += 1;
         }
     }
-    Ok(Json(json!({ "imported": parsed.len(), "created": created, "updated": updated })))
+    // Keep the club master data in sync with whatever the import brought in.
+    let names: Vec<String> =
+        parsed.iter().map(|c| c.club.trim().to_string()).filter(|c| !c.is_empty()).collect();
+    clubs::ensure_names(&st.pool, &names).await?;
+    Ok(Json(json!({
+        "imported": parsed.len(), "created": created, "updated": updated, "skipped": skipped
+    })))
+}
+
+// ── Clubs (master data for the fighter-editor dropdown) ─────────────────────
+
+/// GET /api/clubs — all clubs, alphabetical.
+pub async fn list_clubs(State(st): State<AppState>) -> Result<Json<Value>, AppError> {
+    Ok(Json(json!({ "clubs": clubs::all(&st.pool).await? })))
+}
+
+/// POST /api/clubs — {name, association?}; idempotent on name.
+pub async fn create_club(
+    State(st): State<AppState>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::status(StatusCode::BAD_REQUEST, "name required".into()));
+    }
+    let assoc = body.get("association").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let id = clubs::create(&st.pool, &name, Some(assoc)).await?;
+    Ok(Json(json!({ "status": "ok", "id": id })))
+}
+
+/// PUT /api/clubs/:id — rename/re-associate; rename cascades onto fighters.
+pub async fn update_club(
+    State(st): State<AppState>,
+    Path(id): Path<i32>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::status(StatusCode::BAD_REQUEST, "name required".into()));
+    }
+    let assoc = body.get("association").and_then(|v| v.as_str()).unwrap_or("").trim();
+    match clubs::update(&st.pool, id, &name, Some(assoc)).await {
+        Ok(carried) => Ok(Json(json!({ "status": "ok", "fightersRenamed": carried }))),
+        Err(ccr_db::DbError::RowNotFound) => {
+            Err(AppError::status(StatusCode::NOT_FOUND, "club not found".into()))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// DELETE /api/clubs/:id — 409 while fighters still reference it.
+pub async fn delete_club(
+    State(st): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<Value>, AppError> {
+    let n = clubs::fighters_on(&st.pool, id).await?;
+    if n > 0 {
+        return Err(AppError::status(
+            StatusCode::CONFLICT,
+            format!("{n} Kämpfer in diesem Verein"),
+        ));
+    }
+    if clubs::delete(&st.pool, id).await? == 0 {
+        return Err(AppError::status(StatusCode::NOT_FOUND, "club not found".into()));
+    }
+    Ok(Json(json!({ "status": "ok" })))
 }
 
 // ── Age-class locks (gate admin edit/assign/generate; never the live path) ───
@@ -227,7 +308,16 @@ pub async fn update_participant(
     if n == 0 {
         return Err(AppError::status(StatusCode::NOT_FOUND, format!("participant {id} not found")));
     }
+    ensure_club(&st, &edit).await?;
     Ok(Json(json!({ "status": "ok", "id": id })))
+}
+
+/// A club name typed/imported outside the dropdown becomes master data too.
+async fn ensure_club(st: &AppState, edit: &ParticipantEdit) -> Result<(), AppError> {
+    if !edit.club.trim().is_empty() {
+        clubs::create(&st.pool, edit.club.trim(), Some(edit.association.trim())).await?;
+    }
+    Ok(())
 }
 
 /// POST /api/participants — create a new fighter from the in-app editor.
@@ -240,6 +330,7 @@ pub async fn create_participant(
         return Err(AppError::status(StatusCode::BAD_REQUEST, "first_name + last_name required".into()));
     }
     let id = participants::create(&st.pool, &edit).await?;
+    ensure_club(&st, &edit).await?;
     Ok(Json(json!({ "status": "ok", "id": id })))
 }
 
@@ -295,6 +386,224 @@ pub async fn print_wiegekarten(State(st): State<AppState>) -> Result<Response, A
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         .body(Body::from(html))
         .unwrap())
+}
+
+
+// ── Seeding sub-page (Kämpfer + editierbare Nummern je Klasse/Pool) ──────────
+
+/// Visible slot order of a bracket: pool slots per pool (reconstructed from the
+/// canonical schedule, like the print grid) or the KO round-0 lines top-down.
+/// Returns (pool_index_or_none, gp_id) per slot.
+async fn visible_slots(
+    pool: &ccr_db::PgPoolHandle,
+    bracket_id: i32,
+) -> Result<Vec<(Option<i32>, i32)>, AppError> {
+    let all: Vec<ccr_db::models::Fight> = ccr_db::fights::all_fights(pool)
+        .await?
+        .into_iter()
+        .filter(|f| f.bracket_id == bracket_id)
+        .collect();
+    let mut out: Vec<(Option<i32>, i32)> = Vec::new();
+    let mut pool_indices: Vec<i32> = all
+        .iter()
+        .filter(|f| f.bracket_phase == "pool")
+        .filter_map(|f| f.pool_index)
+        .collect();
+    pool_indices.sort_unstable();
+    pool_indices.dedup();
+    if !pool_indices.is_empty() {
+        for pi in pool_indices {
+            let mut fs: Vec<&ccr_db::models::Fight> = all
+                .iter()
+                .filter(|f| f.bracket_phase == "pool" && f.pool_index == Some(pi))
+                .collect();
+            fs.sort_by_key(|f| f.fight_number.unwrap_or(f.id));
+            let mut seen: Vec<i32> = Vec::new();
+            for f in &fs {
+                for gp in [f.participant1_id, f.participant2_id].into_iter().flatten() {
+                    if !seen.contains(&gp) {
+                        seen.push(gp);
+                    }
+                }
+            }
+            let sched = pools::pool_fight_schedule(seen.len());
+            if sched.len() == fs.len() {
+                let mut slots: Vec<Option<i32>> = vec![None; seen.len()];
+                for (i, f) in fs.iter().enumerate() {
+                    let (a, b) = sched[i];
+                    slots[a] = f.participant1_id;
+                    slots[b] = f.participant2_id;
+                }
+                out.extend(slots.into_iter().flatten().map(|gp| (Some(pi), gp)));
+            } else {
+                out.extend(seen.into_iter().map(|gp| (Some(pi), gp)));
+            }
+        }
+    }
+    let mut r0: Vec<&ccr_db::models::Fight> = all
+        .iter()
+        .filter(|f| f.bracket_phase == "wb" && f.round == Some(0))
+        .collect();
+    r0.sort_by_key(|f| f.pos_in_round.unwrap_or(0));
+    for f in r0 {
+        if let Some(p1) = f.participant1_id {
+            out.push((None, p1));
+        }
+        if let Some(p2) = f.participant2_id {
+            if f.participant2_id != f.participant1_id {
+                out.push((None, p2));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// GET /api/brackets/{id}/seeding — the bracket's fighters in visible order,
+/// with their numbers (1..n) for the seeding editor.
+pub async fn get_seeding(
+    State(st): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<Value>, AppError> {
+    let Some(summary) = brackets::all_summaries(&st.pool).await?.into_iter().find(|s| s.id == id) else {
+        return Err(AppError::status(StatusCode::NOT_FOUND, format!("bracket {id} not found")));
+    };
+    let slots = visible_slots(&st.pool, id).await?;
+    let gp_ids: Vec<i32> = slots.iter().map(|(_, gp)| *gp).collect();
+    let people: std::collections::HashMap<i32, _> = participants::resolve(&st.pool, &gp_ids)
+        .await?
+        .into_iter()
+        .map(|p| (p.gp_id, p))
+        .collect();
+    let has_results = fights::any_finished_for_bracket(&st.pool, id).await?;
+    let places = json!({
+        "first": summary.first_place, "second": summary.second_place,
+        "third1": summary.third_place_1, "third2": summary.third_place_2,
+    });
+    let rows: Vec<Value> = slots
+        .iter()
+        .enumerate()
+        .map(|(i, (pi, gp))| {
+            let p = people.get(gp);
+            json!({
+                "pos": i + 1,
+                "gpId": gp,
+                "name": p.map(|p| format!("{} {}", p.first_name, p.last_name).trim().to_string()).unwrap_or_default(),
+                "club": p.and_then(|p| p.club.clone()).unwrap_or_default(),
+                "pool": pi.map(|x| ((b'A' + x as u8) as char).to_string()),
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "category": summary.group_name,
+        "bracketType": summary.bracket_type,
+        "hasResults": has_results,
+        "places": places,
+        "rows": rows,
+    })))
+}
+
+/// PUT /api/brackets/{id}/seeding {"order":[gpId,...]} — re-seed by swapping
+/// the participant references on the EXISTING fights (surgical permutation,
+/// mirrors edv apply_pool_reseeding): slot i's occupant becomes order[i].
+/// Fight numbers, schedule and tree structure stay untouched. Blocked once a
+/// result exists (409) or the age class is locked (423).
+pub async fn put_seeding(
+    State(st): State<AppState>,
+    Path(id): Path<i32>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    if brackets::find(&st.pool, id).await?.is_none() {
+        return Err(AppError::status(StatusCode::NOT_FOUND, format!("bracket {id} not found")));
+    }
+    let locked = locks::locked_keys(&st.pool).await?;
+    if !locked.is_empty() {
+        if let Some((g, Some(age))) = brackets::group_class(&st.pool, id).await? {
+            if locks::is_class_locked(&locked, g.as_deref(), &age) {
+                return Err(AppError::status(StatusCode::LOCKED, format!("Klasse '{age}' ist gesperrt")));
+            }
+        }
+    }
+    if fights::any_finished_for_bracket(&st.pool, id).await? {
+        return Err(AppError::status(
+            StatusCode::CONFLICT,
+            "Bracket hat bereits Ergebnisse — Umlosung nicht mehr möglich".into(),
+        ));
+    }
+    let new_order: Vec<i32> = body
+        .get("order")
+        .and_then(|o| o.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_i64().map(|x| x as i32)).collect())
+        .unwrap_or_default();
+    let old_order: Vec<i32> = visible_slots(&st.pool, id).await?.into_iter().map(|(_, gp)| gp).collect();
+    let mut sorted_new = new_order.clone();
+    let mut sorted_old = old_order.clone();
+    sorted_new.sort_unstable();
+    sorted_old.sort_unstable();
+    if sorted_new != sorted_old {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "order muss eine Permutation der aktuellen Kämpfer sein".into(),
+        ));
+    }
+    let (olds, news): (Vec<i32>, Vec<i32>) = old_order
+        .iter()
+        .zip(new_order.iter())
+        .filter(|(o, n)| o != n)
+        .map(|(o, n)| (*o, *n))
+        .unzip();
+    if !olds.is_empty() {
+        fights::remap_participants(&st.pool, id, &olds, &news).await?;
+    }
+    Ok(Json(json!({ "reseeded": true, "changed": olds.len() })))
+}
+
+
+/// PUT /api/brackets/{id}/places {"first","second","third1","third2"} —
+/// manual placement entry (paper results): gp ids restricted to the bracket's
+/// own fighters, duplicates rejected. Any place may be null; at least one set
+/// place marks the bracket completed, all null resets it to pending.
+pub async fn put_places(
+    State(st): State<AppState>,
+    Path(id): Path<i32>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    if brackets::find(&st.pool, id).await?.is_none() {
+        return Err(AppError::status(StatusCode::NOT_FOUND, format!("bracket {id} not found")));
+    }
+    let locked = locks::locked_keys(&st.pool).await?;
+    if !locked.is_empty() {
+        if let Some((g, Some(age))) = brackets::group_class(&st.pool, id).await? {
+            if locks::is_class_locked(&locked, g.as_deref(), &age) {
+                return Err(AppError::status(StatusCode::LOCKED, format!("Klasse '{age}' ist gesperrt")));
+            }
+        }
+    }
+    let allowed = brackets::group_participant_ids(&st.pool, id).await?;
+    let get = |k: &str| body.get(k).and_then(|v| v.as_i64()).map(|x| x as i32);
+    let places = [get("first"), get("second"), get("third1"), get("third2")];
+    let set: Vec<i32> = places.iter().flatten().copied().collect();
+    if set.iter().any(|gp| !allowed.contains(gp)) {
+        return Err(AppError::status(StatusCode::BAD_REQUEST, "Kämpfer gehört nicht zu dieser Liste".into()));
+    }
+    let mut dedup = set.clone();
+    dedup.sort_unstable();
+    dedup.dedup();
+    if dedup.len() != set.len() {
+        return Err(AppError::status(StatusCode::BAD_REQUEST, "Ein Kämpfer kann nur einen Platz belegen".into()));
+    }
+    let status = if set.is_empty() { "pending" } else { "completed" };
+    sqlx_places(&st.pool, id, places, status).await?;
+    Ok(Json(json!({ "saved": true, "status": status })))
+}
+
+async fn sqlx_places(
+    pool: &ccr_db::PgPoolHandle,
+    id: i32,
+    p: [Option<i32>; 4],
+    status: &str,
+) -> Result<(), AppError> {
+    brackets::set_places(pool, id, p[0], p[1], p[2], p[3], status).await?;
+    Ok(())
 }
 
 /// POST /api/brackets/{id}/generate — generate fights for a bracket from its
@@ -360,6 +669,9 @@ async fn generate_fights_for(
     }
     let age_group = brackets::group_class(pool, id).await?.and_then(|(_, a)| a);
     let ty = cfg.recommend(n, age_group.as_deref());
+    // A strict threshold table (pools starting at 5) classifies 3-4 fighters as
+    // 'special', which only handles n<=2 — DJB fights 3-4 as a pool.
+    let ty = if ty == "special" && n >= 3 { "pools".to_string() } else { ty };
     match ty.as_str() {
         // A 1-fighter pool (e.g. a youth weight outlier) → solo, auto 1st place.
         "pools" if n == 1 => {
@@ -644,8 +956,11 @@ pub async fn export_results_pdf(State(st): State<AppState>) -> Result<Response, 
 }
 
 /// One row per awarded placement of every completed bracket (Urkunden source).
-async fn urkunden_rows(st: &AppState) -> Result<Vec<UrkundeRow>, AppError> {
-    let summaries = brackets::all_summaries(&st.pool).await?;
+async fn urkunden_rows(st: &AppState, only: Option<i32>) -> Result<Vec<UrkundeRow>, AppError> {
+    let mut summaries = brackets::all_summaries(&st.pool).await?;
+    if let Some(id) = only {
+        summaries.retain(|s| s.id == id);
+    }
     let people = resolve_placement_people(st, &summaries).await?;
     let mut rows = Vec::new();
     for s in &summaries {
@@ -655,11 +970,18 @@ async fn urkunden_rows(st: &AppState) -> Result<Vec<UrkundeRow>, AppError> {
         let places = [s.first_place, s.second_place, s.third_place_1, s.third_place_2];
         for (i, gp) in places.iter().enumerate() {
             let Some(p) = gp.and_then(|id| people.get(&id)) else { continue };
+            // Gewichtsklasse column doubles as the youth pool label
+            // ("U11 | Pool 2" has no weight class - use the pool segment).
+            let gewicht = s.weight_class.clone().unwrap_or_else(|| {
+                s.group_name.split('|').next_back().map(|x| x.trim().to_string()).unwrap_or_default()
+            });
             rows.push(UrkundeRow {
                 vorname: p.first_name.clone(),
                 nachname: p.last_name.clone(),
                 platz: place_label(i),
                 klasse: s.group_name.clone(),
+                altersklasse: s.age_group.clone().unwrap_or_default(),
+                gewichtsklasse: gewicht,
                 verein: p.club.clone().unwrap_or_default(),
             });
         }
@@ -667,23 +989,61 @@ async fn urkunden_rows(st: &AppState) -> Result<Vec<UrkundeRow>, AppError> {
     Ok(rows)
 }
 
-/// GET /api/export/urkunden.xlsx — one row per awarded placement (completed only).
-pub async fn export_urkunden(State(st): State<AppState>) -> Result<Response, AppError> {
-    let rows = urkunden_rows(&st).await?;
+#[derive(serde::Deserialize)]
+pub struct UrkundenQuery {
+    /// optional bracket id — limits the export to ONE Klasse/Pool
+    bracket: Option<i32>,
+}
+
+/// Filename-safe suffix from a bracket's group name ("U11 | Pool 2" → "U11-Pool-2").
+async fn urkunden_filename(st: &AppState, only: Option<i32>, ext: &str) -> String {
+    let base = match only {
+        None => "urkunden".to_string(),
+        Some(id) => {
+            let name = brackets::all_summaries(&st.pool)
+                .await
+                .ok()
+                .and_then(|v| v.into_iter().find(|s| s.id == id))
+                .map(|s| s.group_name)
+                .unwrap_or_else(|| format!("bracket{id}"));
+            let safe: String = name
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect();
+            let safe = safe.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+            format!("urkunden-{safe}")
+        }
+    };
+    format!("{base}.{ext}")
+}
+
+/// GET /api/export/urkunden.xlsx[?bracket=id] — one row per awarded placement
+/// (completed only); `bracket` limits to one Klasse/Pool (Poolbezeichnung is
+/// the klasse column either way).
+pub async fn export_urkunden(
+    State(st): State<AppState>,
+    Query(q): Query<UrkundenQuery>,
+) -> Result<Response, AppError> {
+    let rows = urkunden_rows(&st, q.bracket).await?;
     let bytes = export::urkunden_xlsx(&rows)
         .map_err(|e| AppError::status(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(xlsx_response("urkunden.xlsx", bytes))
+    let fname = urkunden_filename(&st, q.bracket, "xlsx").await;
+    Ok(xlsx_response(&fname, bytes))
 }
 
 /// GET /api/export/urkunden.csv — merge-ready CSV for Affinity / LibreOffice
 /// data merge (one row per placement; columns = merge field names).
-pub async fn export_urkunden_csv(State(st): State<AppState>) -> Result<Response, AppError> {
-    let rows = urkunden_rows(&st).await?;
+pub async fn export_urkunden_csv(
+    State(st): State<AppState>,
+    Query(q): Query<UrkundenQuery>,
+) -> Result<Response, AppError> {
+    let rows = urkunden_rows(&st, q.bracket).await?;
     let csv = export::urkunden_csv(&rows)
         .map_err(|e| AppError::status(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let fname = urkunden_filename(&st, q.bracket, "csv").await;
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
-        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"urkunden.csv\"")
+        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{fname}\""))
         .body(Body::from(csv))
         .unwrap())
 }

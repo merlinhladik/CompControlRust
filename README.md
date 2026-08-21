@@ -3,7 +3,7 @@
 
 Unified Rust web server merging **JudgeFrontend** (live scoring API + PWA) and
 **edv** (tournament admin) into one backend with a single web frontend, part of
-the "TOP Team Combat Control" Judo suite.
+the "Competition Control" Judo suite.
 
 > **Status:** backend functionally complete — live scoring, all bracket types,
 > standings, admin, and exports are ported and tested; the Tkinter→Leptos admin
@@ -40,6 +40,9 @@ cargo test
 
 Requires a Rust toolchain (`rustup`, ≥1.80) and — for DB work — a reachable
 Postgres (`docker compose -f ../edv/docker-compose.yaml up -d db`).
+
+No toolchain? Standalone Docker deployment (own Postgres, no edv needed):
+see [DOCKER.md](DOCKER.md).
 
 ## Export & printing
 

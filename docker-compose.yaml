@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Standalone CCR deployment: Postgres + the web server (HTTP + WS + frontend).
 # CCR owns this DB and creates its schema via migrations on startup — it is the
-# CCR-only database (separate volume), NOT the shared edv/JF instance. Don't run
-# this alongside edv/docker-compose.yaml on the same host (both bind :5432).
+# CCR-only database (separate volume), NOT the shared edv/JF instance. Host
+# port is 5433 so it coexists with edv's :5432; containers use db:5432 internally.
 #
 #   docker compose up -d --build      # build images + start
 #   open http://localhost:5001        # frontend (→ "Admin" for the config/lists)
@@ -18,7 +18,7 @@ services:
       POSTGRES_PASSWORD: mypassword
       POSTGRES_DB: mydatabase
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5433:5432"   # host access (psql/seeds) on 5433; avoids edv's :5432
     volumes:
       - ccr_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -37,6 +37,7 @@ services:
     environment:
       DATABASE_URL: postgres://myuser:mypassword@db:5432/mydatabase
       CCR_HTTP_ADDR: 0.0.0.0:5001
+      CCR_MATS: ${CCR_MATS:-0}   # "1" = Mattenliste + Ipponboard-Kopplung (Webhook/Push)
       RUST_LOG: ccr_server=info,tower_http=info
     ports:
       - "5001:5001"
