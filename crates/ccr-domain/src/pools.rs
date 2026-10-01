@@ -1,29 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Bracket-generation core — pure (no DB).
-//!   - `recommend_bracket_type`: pick the bracket type from the fighter count
-//!     (CLAUDE.md GenerationMethods defaults).
 //!   - `pool_fight_schedule`: the single source of pool fight order for the whole
 //!     suite (mirror of edv `pool_renderer._generate_fight_schedule`).
 //!
-//! Mirrors edv `data_transformation_pipeline._recommend_generation_method` +
-//! `pool_renderer._generate_fight_schedule`.
-
-/// Bracket type for `n` fighters. U9/U11 always pool (configurable pool sizes).
-/// Thresholds (WSP/CLAUDE.md): <3 special · 3–5 pools · 6–10 double ·
-/// 11–32 ko · 33–64 repechage · >64 deferred (capped to special + warn).
-pub fn recommend_bracket_type(n: usize, is_u9_or_u11: bool) -> &'static str {
-    if is_u9_or_u11 {
-        return "pools";
-    }
-    match n {
-        0..=2 => "special",
-        3..=5 => "pools",
-        6..=10 => "double",
-        11..=32 => "ko",
-        33..=64 => "repechage",
-        _ => "special", // >64 deferred
-    }
-}
+//! Mirrors edv `pool_renderer._generate_fight_schedule`.
+//!
+//! Bracket-type recommendation (special/pools/double/ko/repechage) is NOT here —
+//! it is config-driven and lives in `ccr-db::app_config::AppConfig::recommend`
+//! (editable `adult_methods` + `youth_classes`), which is the single source of
+//! truth. (The old hardcoded `recommend_bracket_type` was removed — B2.)
 
 /// Split weight-sorted youth fighters into pools, returning index groups into
 /// the input. Two-stage, mirroring edv `bracket_utils.split_u9_u11_into_pools`:
@@ -133,19 +118,6 @@ fn circle_method(pool_size: usize) -> Vec<(usize, usize)> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
-
-    #[test]
-    fn type_thresholds_match_claudemd() {
-        assert_eq!(recommend_bracket_type(2, false), "special");
-        assert_eq!(recommend_bracket_type(5, false), "pools");
-        assert_eq!(recommend_bracket_type(8, false), "double");
-        assert_eq!(recommend_bracket_type(16, false), "ko");
-        assert_eq!(recommend_bracket_type(32, false), "ko");
-        assert_eq!(recommend_bracket_type(50, false), "repechage");
-        assert_eq!(recommend_bracket_type(64, false), "repechage");
-        assert_eq!(recommend_bracket_type(80, false), "special"); // deferred
-        assert_eq!(recommend_bracket_type(40, true), "pools"); // U9/U11 override
-    }
 
     #[test]
     fn pool_schedules_match_edv() {

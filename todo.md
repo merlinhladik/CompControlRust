@@ -93,7 +93,7 @@ Zwei „Wahrheiten" über Jugend-Regeln.
 Reload. Default-Seed bleibt `["U9","U11"]` = identisches Verhalten wie zuvor. `cargo check
 -p ccr-frontend --target wasm32-unknown-unknown` + `cargo test --workspace` (domain 29, excel 11) grün.
 
-### B2 · 🟡 Doppelte Threshold-Tabelle (eine davon tot)
+### B2 · ✅ Doppelte Threshold-Tabelle (eine davon tot) — ** umgesetzt (2026-10-01)**
 **Problem:**
 - `ccr-domain/src/pools.rs:14-26` — `recommend_bracket_type` (hart: <3 special, 3–5 pools, 6–10 double, 11–32 ko, 33–64 rep).
 - Genutzt wird stattdessen `AppConfig::recommend`: `ccr-db/src/app_config.rs:50-66` (via `admin.rs:671`),
@@ -105,6 +105,12 @@ zwei Schwellwert-Tabellen können sich unabhängig voneinander verschieben.
 **Fix:** `pools.rs::recommend_bracket_type` **löschen** (inkl. Tests) **oder** als Single-Source-Truth etablieren und
 `AppConfig::recommend` darauf aufbauen. Eines der beiden, nicht beide.
 **Verifikation:** `cargo test --workspace` grün; nur eine Funktion entscheidet über Bracket-Typ.
+
+**Status:** umgesetzt. `pools.rs::recommend_bracket_type` (hartkodiert) + Test `type_thresholds_match_claudemd`
+gelöscht. Single-Source-Truth bleibt die konfig-getriebene `AppConfig::recommend` (`adult_methods` +
+`youth_classes`, via `admin.rs::generate_fights_for`), weil sie UI-editierbar ist und die B1-Richtung
+(fortlaufend konfig-getrieben) fortsetzt — die hartkodierte Tabelle wäre ein Rückbau in Hardcoding.
+`cargo test --workspace` grün (domain 28, excel 11); nur noch `AppConfig::recommend` entscheidet über den Typ.
 
 ### B3 · 🟠 Schema-Abweichung auf der geteilten edv-DB (Architektur-Entscheidung)
 **Problem:** `.env.example` zielt explizit auf die **gemeinsame** edv/JF-DB („Same Postgres as edv/JF during migration"),
