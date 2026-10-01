@@ -33,8 +33,7 @@ pub fn list_view(
 }
 
 /// Scoring controls (JVP sub-scores for youth, ±points otherwise). Shared by the
-/// Mattenliste row and the tree node, so manual result entry works with the
-/// Mattenliste hidden (CCR_MATS off).
+/// Mattenliste row and the tree node.
 fn score_buttons(m: &Match, send: impl Fn(serde_json::Value) + Copy + Send + 'static) -> Option<AnyView> {
     if !m.scoreable() {
         return None;

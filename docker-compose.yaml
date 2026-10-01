@@ -37,7 +37,6 @@ services:
     environment:
       DATABASE_URL: postgres://myuser:mypassword@db:5432/mydatabase
       CCR_HTTP_ADDR: 0.0.0.0:5001
-      CCR_MATS: ${CCR_MATS:-0}   # "1" = Mattenliste + Ipponboard-Kopplung (Webhook/Push)
       RUST_LOG: ccr_server=info,tower_http=info
     ports:
       - "5001:5001"

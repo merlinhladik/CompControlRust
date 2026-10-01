@@ -1,5 +1,5 @@
--- Per-fighter sub-scores (Ippon / Waza-ari / Yuko / Shido). Shared storage for
--- native CCR scoring AND the Ipponboard webhook callback. U9/U11 derive the
+-- Per-fighter sub-scores (Ippon / Waza-ari / Yuko / Shido). Storage for native
+-- CCR scoring (entered over WS). U9/U11 derive the
 -- JVP-Additiv-20 total from these (Ippon 10 / Waza-ari 5 / Yuko 3 / Shido +2 to
 -- opponent); higher age classes only display them on fight click. Additive,
 -- DEFAULT 0 ⇒ existing rows + edv reads are unaffected.

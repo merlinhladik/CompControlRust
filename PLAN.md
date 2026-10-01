@@ -102,20 +102,21 @@ Folgt direkt aus „100 % Rust, kein Sidecar". Bevor irgendetwas anderes startet
 ### Phase 2 — Live-Pfad (das Herz von JF)  — 🔧 Kern läuft (2026-06-18)
 - ✅ WS `/ws` über tokio-`broadcast`-Channel (ersetzt JFs ConnectionManager);
   `tokio::select!` über Socket-recv + Broadcast-recv pro Verbindung.
-- ✅ `SCORE_UPDATE`, `STATUS_UPDATE` (Sieger aus Scores + **WB-Binärbaum-
-  Propagation** mit Lazy-Create, `ccr-domain::ko::wb_next/wb_num_rounds`),
-  `REORDER`, `SIGNAL`; Broadcasts `SCORE_SYNC`/`REFRESH_LIST`.
-- ✅ `POST /api/ippon-score` (Webhook) + `POST /api/push-to-ipponboard/:id`
-  (Pointer-State, `Arc<Mutex>`). Replay-Schutz (Pointer löschen) wie JF.
-- ✅ **E2E verifiziert** (echter Python-WS-Client gegen echte DB): Score→Finish→
-  Propagation rückt beide HF-Sieger ins Finale; REORDER; Webhook-Pfad inkl. 400er.
+- ✅ `SCORE_UPDATE`, `SUBSCORE_UPDATE` (native JVP-Subscores), `STATUS_UPDATE`
+  (Sieger aus Scores + **WB-Binärbaum-Propagation** mit Lazy-Create,
+  `ccr-domain::ko::wb_next/wb_num_rounds`), `REORDER`, `SIGNAL`; Broadcasts
+  `SCORE_SYNC`/`REFRESH_LIST`.
+- ⛔ **Kein Ipponboard:** kein `POST /api/ippon-score`-Webhook, kein
+  `POST /api/push-to-ipponboard/:id`. Ergebnisse werden **nativ über WS** erfasst
+  (Score/Subscore/Status) — CCR koppelt bewusst nicht an das Ipponboard.
+- ✅ **E2E verifiziert** (echter WS-Client gegen echte DB): Score→Finish→
+  Propagation rückt beide HF-Sieger ins Finale; REORDER.
 - ⏳ **Phase 4 (aufgeschoben, geloggt, graceful):** Pool-Standings-Finalize
   (DJB-Tiebreaker), Doppelpool-/Doppel-KO-Finalize, LB-Drop/-Advance
   (`_drop_loser_to_lb`/`_advance_lb_winner`), Repechage, Eager-Tree-
   Materialisierung + Bye-Auflösung. STATUS_UPDATE broadcastet diese Phasen
   weiterhin (nur ohne Topologie-Folgeschritte).
-- ⏳ Auto-Order (`fightOrder.js` chunked-round-robin) → `ccr-domain`; Ipponboard-
-  Outbound-`POST /fighters` (Ipponboard-Integration).
+- ⏳ Auto-Order (`fightOrder.js` chunked-round-robin) → `ccr-domain`.
 - **Exit (offen):** ganzes Turnier live über CCR inkl. Topologie ⇒ braucht Phase 4.
 
 ### Phase 3 — Live-Frontend  — 🔧 Slice 1 läuft (2026-06-18)
@@ -415,9 +416,9 @@ Reihenfolge nach steigendem Risiko (Rest):
 
 ## 4. Was sich NICHT ändert (Verträge wahren)
 
-- **Ipponboard** bleibt unverändert. CCR muss `POST /fighters`-Gegenstück +
-  `/api/ippon-score`-Webhook bedienen wie JF; optionales `pool`-Feld respektieren.
-  Topologie-Logik ist für Ipponboard unsichtbar.
+- **Ipponboard** bleibt unverändert und wird von CCR **nicht** angesprochen: CCR
+  kennt weder `POST /fighters` noch `/api/ippon-score`. Ergebnis-Erfassung läuft
+  nativ über WS (Score/Subscore/Status) — siehe Phase 2.
 - **WeighIn** schreibt weiter `contestants_*.json/.csv` (Schema unverändert);
   CCR übernimmt edv's Re-Import-Seite.
 - **Postgres-Schema** während Phase 1–4 unverändert; CCR passt sich an, nicht umgekehrt.

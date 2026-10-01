@@ -7,10 +7,9 @@
 //! First fighter to reach **≥ 20 = win (Sore Made)**; equal totals at time =
 //! **Hiki-wake** (draw — there is NO golden score in this system).
 //!
-//! Ipponboard owns the *live* JVP rules (hold-time caps, §3.5.3 sequence caps).
-//! CCR only needs the additive total + outcome from the resulting sub-score
-//! counts, both for its own native scoring and for the values the webhook
-//! delivers. Pure logic, no I/O.
+//! CCR implements the additive total + outcome from the sub-score counts for
+//! its own native scoring (entered over WS). Live timing / §3.5.3 sequence
+//! rules are out of scope here. Pure logic, no I/O.
 
 pub const IPPON: i32 = 10;
 pub const WAZARI: i32 = 5;

@@ -105,32 +105,6 @@ pub async fn add_subscore(
     find(pool, id).await
 }
 
-/// Overwrite all 8 sub-scores at once (Ipponboard webhook delivers the final
-/// counts per fighter). Values clamped at 0.
-pub async fn set_subscores(
-    pool: &PgPool,
-    id: i32,
-    s1: ccr_domain::jvp::SubScores,
-    s2: ccr_domain::jvp::SubScores,
-) -> Result<Option<Fight>, sqlx::Error> {
-    sqlx::query(
-        "UPDATE fights SET ippon1=$1, wazari1=$2, yuko1=$3, shido1=$4, \
-         ippon2=$5, wazari2=$6, yuko2=$7, shido2=$8 WHERE id=$9",
-    )
-    .bind(s1.ippon.max(0))
-    .bind(s1.wazari.max(0))
-    .bind(s1.yuko.max(0))
-    .bind(s1.shido.max(0))
-    .bind(s2.ippon.max(0))
-    .bind(s2.wazari.max(0))
-    .bind(s2.yuko.max(0))
-    .bind(s2.shido.max(0))
-    .bind(id)
-    .execute(pool)
-    .await?;
-    find(pool, id).await
-}
-
 /// Update the displayed point totals without finishing (live JVP additive total).
 pub async fn set_scores(
     pool: &PgPool,
@@ -148,8 +122,7 @@ pub async fn set_scores(
 }
 
 /// Finalize a fight with an explicit winner (or `None` = Hiki-wake/draw) and the
-/// given displayed scores. Used by the JVP path (native + webhook), where the
-/// winner can be a draw — unlike `apply_winner` which always names a fighter.
+/// given displayed scores. Used by the JVP path, where the winner can be a draw.
 pub async fn set_result(
     pool: &PgPool,
     id: i32,
@@ -198,32 +171,6 @@ pub async fn set_status(
         .bind(id)
         .execute(pool)
         .await?;
-    find(pool, id).await
-}
-
-/// Apply a decisive result directly (Ipponboard webhook). JF main.py:2519-2525.
-pub async fn apply_winner(
-    pool: &PgPool,
-    id: i32,
-    winner_is_p1: bool,
-) -> Result<Option<Fight>, sqlx::Error> {
-    let Some(f) = find(pool, id).await? else {
-        return Ok(None);
-    };
-    let (s1, s2, winner) = if winner_is_p1 {
-        (1, 0, f.participant1_id)
-    } else {
-        (0, 1, f.participant2_id)
-    };
-    sqlx::query(
-        "UPDATE fights SET score1=$1, score2=$2, winner_id=$3, status='finished' WHERE id=$4",
-    )
-    .bind(s1)
-    .bind(s2)
-    .bind(winner)
-    .bind(id)
-    .execute(pool)
-    .await?;
     find(pool, id).await
 }
 

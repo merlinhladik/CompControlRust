@@ -23,12 +23,6 @@ open http://localhost:5001        # frontend ("Admin" for config/lists)
 First build takes a while (Rust release build + WASM); subsequent builds are
 cached. `docker compose ps` shows both services `healthy` when ready.
 
-With Mattenliste + Ipponboard coupling enabled:
-
-```sh
-CCR_MATS=1 docker compose up -d --build
-```
-
 ## Ports
 
 | Port | What | Note |

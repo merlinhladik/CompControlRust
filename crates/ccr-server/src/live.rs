@@ -1,20 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Live path (Phase 2): WS `/ws`, Ipponboard webhook, push pointer.
-//! Mirrors JF main.py WS loop + /api/ippon-score.
+//! Live path: WS `/ws` — native live scoring over WebSocket (no Ipponboard).
+//! Mirrors JF main.py WS loop.
 //!
-//! Implemented: SCORE_UPDATE, STATUS_UPDATE (winner + WB binary-tree
-//! propagation), REORDER, SIGNAL; SCORE_SYNC / REFRESH_LIST broadcasts.
-//! DEFERRED to Phase 4 (logged, graceful): pool standings finalize,
-//! double-pool, doppel-KO LB drop/advance, repechage — all need ccr-domain
-//! topology. STATUS_UPDATE still broadcasts the scored fight for those phases.
+//! Implemented: SCORE_UPDATE, SUBSCORE_UPDATE (native JVP sub-scores),
+//! STATUS_UPDATE (winner + WB binary-tree propagation, incl. doppel-KO /
+//! doppelpool / repechage / pool finalize), REORDER, SIGNAL; SCORE_SYNC /
+//! REFRESH_LIST / BRACKET_COMPLETED broadcasts.
 
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        State,
     },
     response::IntoResponse,
-    Json,
 };
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
@@ -297,93 +295,7 @@ async fn jvp_finish_broadcast(
     Ok(())
 }
 
-/// Parse a `fighterN: {ippon,wazari,yuko,shido}` object from the webhook payload.
-/// Missing object/keys ⇒ 0 (tolerant; old Ipponboard sends no sub-scores).
-fn parse_subscores(v: Option<&Value>) -> jvp::SubScores {
-    let obj = v.and_then(|x| x.as_object());
-    let g = |k: &str| -> i32 {
-        obj.and_then(|m| m.get(k)).and_then(|x| x.as_i64()).unwrap_or(0) as i32
-    };
-    jvp::SubScores::new(g("ippon"), g("wazari"), g("yuko"), g("shido"))
-}
-
-/// POST /api/push-to-ipponboard/{match_id} — marks the match as pushed so the
-/// Ipponboard webhook can apply its result. JF also POSTs the fighters to
-/// Ipponboard's :8080/fighters; that outbound call is deferred (Ipponboard
-/// integration, not the live core).
-pub async fn push_to_ipponboard(
-    State(st): State<AppState>,
-    Path(match_id): Path<i32>,
-) -> Result<Json<Value>, AppError> {
-    if fights::find(&st.pool, match_id).await?.is_none() {
-        return Err(AppError::status(
-            axum::http::StatusCode::NOT_FOUND,
-            format!("Match {match_id} not found"),
-        ));
-    }
-    *st.last_pushed.lock().await = Some(match_id);
-    Ok(Json(json!({ "status": "ok", "pushedMatchId": match_id })))
-}
-
-/// POST /api/ippon-score — Ipponboard 'Senden' webhook. JF main.py:2494.
-pub async fn ippon_score(
-    State(st): State<AppState>,
-    Json(payload): Json<Value>,
-) -> Result<Json<Value>, AppError> {
-    use axum::http::StatusCode;
-
-    let pushed = *st.last_pushed.lock().await;
-    let Some(id) = pushed else {
-        return Err(AppError::status(StatusCode::BAD_REQUEST, "No match pushed yet".into()));
-    };
-    let winner = payload.get("winner").and_then(|v| v.as_str()).unwrap_or("");
-    let is_winner = winner == "fighter1" || winner == "fighter2";
-    // Optional Hiki-wake flag (U9/U11): a real draw, distinct from "Senden early".
-    let record_draw = payload.get("draw").and_then(|v| v.as_bool()) == Some(true) && !is_winner;
-    if !is_winner && !record_draw {
-        return Err(AppError::status(
-            StatusCode::BAD_REQUEST,
-            "Ipponboard hat keinen Sieger gemeldet.".into(),
-        ));
-    }
-    let Some(fight) = fights::find(&st.pool, id).await? else {
-        return Err(AppError::status(StatusCode::NOT_FOUND, format!("Match {id} not found")));
-    };
-    // Per-fighter sub-scores (optional, additive) — store for display + JVP totals.
-    let s1 = parse_subscores(payload.get("fighter1"));
-    let s2 = parse_subscores(payload.get("fighter2"));
-    fights::set_subscores(&st.pool, id, s1, s2).await?;
-    let age = age_group_of(&st, fight.bracket_id).await?;
-    let youth = admin::get_config(&st).await?.is_youth(age.as_deref());
-    // U9/U11 display the JVP additive total; higher classes keep the 1/0 win flag.
-    let (t1, t2) = (jvp::total(&s1, &s2), jvp::total(&s2, &s1));
-
-    let updated = if record_draw {
-        if fight.bracket_phase != "pool" {
-            return Err(AppError::status(
-                StatusCode::BAD_REQUEST,
-                "Remis nur in Pool-Kämpfen möglich (im KO nicht propagierbar).".into(),
-            ));
-        }
-        fights::set_result(&st.pool, id, None, t1, t2).await?
-    } else {
-        let (wid, sc1, sc2) = if winner == "fighter1" {
-            (fight.participant1_id, if youth { t1 } else { 1 }, if youth { t2 } else { 0 })
-        } else {
-            (fight.participant2_id, if youth { t1 } else { 0 }, if youth { t2 } else { 1 })
-        };
-        fights::set_result(&st.pool, id, wid, sc1, sc2).await?
-    };
-    let Some(fight) = updated else {
-        return Err(AppError::status(StatusCode::NOT_FOUND, format!("Match {id} not found")));
-    };
-    // Broadcast + finalize the pool if this closed it (win or draw).
-    jvp_finish_broadcast(&st, &fight).await?;
-    // Clear the pointer so a late/duplicate callback can't re-apply. JF main.py:2538.
-    *st.last_pushed.lock().await = None;
-    Ok(Json(json!({
-        "status": "ok",
-        "appliedMatchId": fight.id,
-        "winner": if record_draw { "draw" } else { winner },
-    })))
-}
+// Ipponboard integration is intentionally not part of CCR: results are entered
+// natively over WS (SCORE_UPDATE / SUBSCORE_UPDATE / STATUS_UPDATE) and the
+// JVP finish path above (`jvp_finish_broadcast`) finalizes pools. There is no
+// /api/ippon-score webhook and no /api/push-to-ipponboard push.

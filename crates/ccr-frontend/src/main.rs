@@ -64,7 +64,6 @@ fn App() -> impl IntoView {
     let (matches, set_matches) = signal(Vec::<Match>::new());
     let (connected, set_connected) = signal(false);
     let (route, set_route) = signal(Route::from_hash(&current_hash()));
-    let (mats, set_mats) = signal(false);
     let (sel_bracket, set_sel_bracket) = signal(None::<i64>);
     let (parts, set_parts) = signal(Vec::<AdminParticipant>::new());
     let (results, set_results) = signal(Vec::<BracketResult>::new());
@@ -120,23 +119,6 @@ fn App() -> impl IntoView {
     let tx = StoredValue::new(tx);
 
     leptos::task::spawn_local(async move { set_matches.set(fetch_matches().await); });
-
-    // Boot: the mats/Ipponboard start option (CCR_MATS server-side; when on,
-    // the Mattenliste tab is shown and becomes the landing view).
-    leptos::task::spawn_local(async move {
-        let on = gloo_net::http::Request::get("/api/features").send().await.ok()
-            .and_then(|r| r.status().eq(&200).then_some(r));
-        if let Some(r) = on {
-            if let Ok(v) = r.json::<serde_json::Value>().await {
-                if v.get("mats").and_then(|m| m.as_bool()).unwrap_or(false) {
-                    set_mats.set(true);
-                    if current_hash().is_empty() {
-                        set_route.set(Route::Matte);
-                    }
-                }
-            }
-        }
-    });
 
     leptos::task::spawn_local(async move {
         let Ok(ws) = WebSocket::open(&ws_url()) else { return };
@@ -194,7 +176,7 @@ fn App() -> impl IntoView {
         <header class="topbar">
             <span class="brand">"Competition Control"</span>
             <nav class="tabs">
-                {move || mats.get().then(|| tab(Route::Matte, "#/matte", "Mattenliste"))}
+                {tab(Route::Matte, "#/matte", "Mattenliste")}
                 {tab(Route::Baum, "#/baum", "Baum")}
                 {tab(Route::Kaempfer, "#/kaempfer", "Kämpfer")}
                 {tab(Route::Listen, "#/listen", "Listen & Ergebnisse")}

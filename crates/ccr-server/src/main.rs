@@ -6,10 +6,10 @@
 //!   - edv frontend (Tkinter)  (tournament admin, now a web frontend)
 //!
 //! Phase 1: read-only `/api/matches` (see matches.rs).
-//! Phase 2: live path — WS `/ws`, Ipponboard webhook, WB propagation (see live.rs).
+//! Phase 2: live path — WS `/ws`, native scoring, WB propagation (see live.rs).
 //! Topology-heavy propagation (LB / repechage / double / pool standings) is Phase 4.
 
-use std::{env, sync::Arc};
+use std::env;
 
 use axum::{
     response::IntoResponse,
@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 
 use ccr_db::PgPoolHandle as PgPool;
 
@@ -27,13 +27,11 @@ mod matches;
 mod print;
 
 /// Shared server state. `tx` fans WS broadcasts out to every client (replaces
-/// JF's ConnectionManager.broadcast); `last_pushed` is the Ipponboard pointer
-/// (JF's global last_pushed_match_id).
+/// JF's ConnectionManager.broadcast).
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
     pub tx: broadcast::Sender<String>,
-    pub last_pushed: Arc<Mutex<Option<i32>>>,
 }
 
 #[tokio::main]
@@ -55,18 +53,13 @@ async fn main() -> anyhow::Result<()> {
     ccr_db::run_migrations(&pool).await?;
     tracing::info!("schema migrations applied");
 
-    // Start option: mat/live coupling (Mattenliste UI + Ipponboard webhook/push).
-    // Off by default — plain admin + list mode needs neither.
-    let mats = env::var("CCR_MATS").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
-
     let (tx, _rx) = broadcast::channel::<String>(256);
     let state = AppState {
         pool,
         tx,
-        last_pushed: Arc::new(Mutex::new(None)),
     };
 
-    let mut app = Router::new()
+    let app = Router::new()
         .route("/health", get(health))
         .route("/api/version", get(version))
         .route("/api/matches", get(matches::get_matches))
@@ -100,13 +93,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/print/wiegekarten", get(admin::print_wiegekarten))
         .route("/print/listen", get(print::print_all))
         .route("/print/liste/:bracket_id", get(print::print_bracket))
-        .route("/ws", get(live::ws_handler))
-        .route("/api/features", get(move || async move { Json(json!({ "mats": mats })) }));
-    if mats {
-        app = app
-            .route("/api/ippon-score", post(live::ippon_score))
-            .route("/api/push-to-ipponboard/:match_id", post(live::push_to_ipponboard));
-    }
+        .route("/ws", get(live::ws_handler));
     let mut app = app.with_state(state);
 
     // Serve the Leptos WASM frontend (Trunk dist) same-origin; SPA fallback to
