@@ -22,10 +22,10 @@ at a time. No big-bang cutover.
 crates/
   ccr-server/   axum HTTP + WebSocket; serves the web frontend (thin)
   ccr-domain/   pure logic: pools, KO, doppel-KO, repechage, standings (crown jewel)
-  ccr-db/       sqlx Postgres access (matches edv schema until edv retires)
+  ccr-db/       sqlx Postgres access (CCR owns the schema, decision 2026-10-01)
   ccr-excel/    .xls/.xlsx/.csv I/O + Urkunden (HIGHEST RISK — 100% Rust, Go/No-Go spike first)
   ccr-frontend/ Leptos (Rust/WASM) web UI: live + admin
-migrations/     sqlx migrations (only after edv schema ownership transfers)
+migrations/     sqlx migrations (CCR owns the schema, decision 2026-10-01)
 docs/
 ```
 

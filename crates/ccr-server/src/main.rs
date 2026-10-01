@@ -48,8 +48,8 @@ async fn main() -> anyhow::Result<()> {
     });
     let pool = ccr_db::connect(&database_url).await?;
     tracing::info!("connected to Postgres");
-    // CCR owns the schema (Phase 5): idempotent baseline creates it on a fresh DB,
-    // no-op on the existing edv DB.
+    // CCR owns the schema (decision 2026-10-01): idempotent baseline creates it
+    // on a fresh DB, no-op on the existing edv DB.
     ccr_db::run_migrations(&pool).await?;
     tracing::info!("schema migrations applied");
 

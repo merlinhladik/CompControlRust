@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Postgres data access (sqlx).
 //!
-//! CRITICAL invariant (CLAUDE.md): the shared Postgres `:5432` is currently
-//! owned by edv (`edv/db_init/1_schema.sql` + `edv/alembic`). During the
-//! strangler migration this crate is a SECOND reader/writer of the SAME tables,
-//! NOT a schema owner. Column types must match exactly:
+//! CRITICAL invariant (CLAUDE.md): the shared Postgres `:5432` is owned by CCR
+//! (decision 2026-10-01, todo B3) — `migrations/` here is the canonical schema.
+//! edv + JF are consumers (declare models, own no migrations; edv's Alembic is
+//! frozen). The baseline is idempotent (`CREATE TABLE IF NOT EXISTS`), so it is
+//! a no-op on the existing edv DB and the full schema on a fresh one. Column
+//! types must still match what edv/JF expect:
 //!   fights.score1/score2/duration/table_id : INTEGER NULL
 //!   fights.status                           : VARCHAR(20) (pending|finished|bye)
+//!   fights.ippon1/.../shido2                : INTEGER NOT NULL DEFAULT 0
 //!   participants.doublestart                : String(10)
 //!
-//! Do NOT introduce migrations that diverge from edv until edv is retired
-//! (PLAN.md, Phase 5). All queries here are runtime-checked (`query_as`), not
-//! the compile-time `query!` macro, so the crate builds without DATABASE_URL.
+//! New schema changes go in `migrations/` (this crate), not edv. All queries
+//! here are runtime-checked (`query_as`), not the compile-time `query!` macro,
+//! so the crate builds without DATABASE_URL.
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
@@ -41,7 +44,7 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
 
 /// Run CCR's schema migrations (workspace `migrations/`). Idempotent: the
 /// baseline is CREATE TABLE IF NOT EXISTS, a no-op on the existing edv DB and
-/// the full schema on a fresh one. From here CCR owns the schema (Phase 5).
+/// the full schema on a fresh one. CCR owns the schema (decision 2026-10-01).
 pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     sqlx::migrate!("../../migrations").run(pool).await
 }

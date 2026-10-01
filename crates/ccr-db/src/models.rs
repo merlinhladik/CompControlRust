@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Row structs mirroring the edv-owned Postgres schema 1:1.
+//! Row structs mirroring the shared Postgres schema 1:1.
 //!
-//! Source of truth: edv/backend/data/models.py (+ edv/alembic). CCR is a SECOND
-//! reader/writer during the strangler migration — it does NOT own this schema
-//! until Phase 5. Keep column names, nullability and types in lockstep with edv.
+//! CCR owns the schema (decision 2026-10-01, todo B3); `migrations/` is the
+//! canonical DDL and edv/backend/data/models.py is the reference we mirror.
+//! Keep column names, nullability and types in lockstep with that reference.
 //!
 //! Type mapping (Postgres -> Rust):
 //!   INTEGER / SERIAL  -> i32
@@ -18,7 +18,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-/// `participants` — the athlete identity (edv is schema owner; weighed-in data).
+/// `participants` — the athlete identity (CCR owns the schema; weighed-in data).
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
 pub struct Participant {
     pub id: i32,

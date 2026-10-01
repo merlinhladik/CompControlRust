@@ -26,9 +26,12 @@ Web-Frontend.
 2. **Logik-Kern zuletzt.** Bracket-Topologien + Excel sind das Risiko. Erst
    Infrastruktur (Server, DB-Zugriff, einfache Endpunkte), dann Live-Pfad, dann
    der Algorithmus-Kern — und der nur mit den portierten Orakel-Tests als Netz.
-3. **edv-Schema bleibt vorerst kanonisch.** `ccr-db` ist zunächst Zweit-Leser/
-   -Schreiber derselben Tabellen, **kein** Schema-Owner. Erst in Phase 5 (edv
-   abgelöst) übernimmt CCR die Migrationen.
+3. **CCR-Schema ist kanonisch (Entscheidung 2026-10-01, todo B3).** `ccr-db` ist
+   Schema-Owner der geteilten Postgres-`5432`; `migrations/` ist die kanonische
+   DDL (Baseline idempotent: No-Op auf der edv-DB, volles Schema auf frischer DB).
+   edv + JF sind Consumer (Modelle deklariert, eigene Migrationen: keine;
+   edv-Alembic eingefroren). Phase 5 = Ablösung der edv-**Features**, nicht des
+   Schema-Handovers (der ist 2026-10-01 erfolgt).
 4. **Betriebsmodell-Bruch bewusst machen.** edv hat heute portable USB-Builds
    (offline Postgres-Client, Turnierbetrieb ohne Internet). „Web-Server" heißt:
    ein Host bedient mehrere Browser im LAN. Das ist eine *Entscheidung*, keine
@@ -82,7 +85,7 @@ Folgt direkt aus „100 % Rust, kein Sidecar". Bevor irgendetwas anderes startet
 - ✅ `ccr-db/src/models.rs`: sqlx-`FromRow`-Structs für ALLE 7 Tabellen 1:1 nach
   `edv/backend/data/models.py`. Typen-Invarianten aus CLAUDE.md eingehalten
   (`INTEGER NULL`, `status VARCHAR(20)`, `doublestart String(10)`,
-  `NUMERIC(5,2)`→`rust_decimal`). Quelle der Wahrheit bleibt edv (bis Phase 5).
+  `NUMERIC(5,2)`→`rust_decimal`). Quelle der Wahrheit = CCR `migrations/` (Schema-Owner seit 2026-10-01); edv `models.py` ist die Referenz, die wir spiegeln.
 - ✅ Read-only Queries (`fights::all_fights`, `participants::resolve`,
   `brackets::resolve`) — runtime-`query_as`, kein DATABASE_URL zum Bauen nötig.
 - ✅ `GET /api/matches` spiegelt JFs Match-Dict inkl. Envelope

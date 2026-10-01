@@ -112,7 +112,7 @@ gelöscht. Single-Source-Truth bleibt die konfig-getriebene `AppConfig::recommen
 (fortlaufend konfig-getrieben) fortsetzt — die hartkodierte Tabelle wäre ein Rückbau in Hardcoding.
 `cargo test --workspace` grün (domain 28, excel 11); nur noch `AppConfig::recommend` entscheidet über den Typ.
 
-### B3 · 🟠 Schema-Abweichung auf der geteilten edv-DB (Architektur-Entscheidung)
+### B3 · ✅ Schema-Abweichung auf der geteilten edv-DB — **umgesetzt (2026-10-01, Option A: CCR-Ownership)**
 **Problem:** `.env.example` zielt explizit auf die **gemeinsame** edv/JF-DB („Same Postgres as edv/JF during migration"),
 CCR-Migrations laufen dort auf — und ändern edvs Schema:
 - `migrations/0003_fight_subscores.sql` — **8 neue Spalten** auf `fights` (ippon1/wazari1/…/shido2).
@@ -131,6 +131,8 @@ edv/Alembic change)", und `:21` — „`edv` is schema owner". CCR:0003 tut **ge
 
 **Verifikation:** whichever gewählt: `edv` und CCR können parallel dieselbe DB lesen; `cargo test` + edv-Smoke grün;
 `CLAUDE.md` widerspricht dem tatsächlichen Schema nicht.
+
+**Status:** umgesetzt (2026-10-01). **Option A gewählt** (Merlin): CCR wird **Schema-Owner** der geteilten `:5432`-DB; edv + JF sind Consumer (deklarieren Modelle, eigene Migrationen: keine; **edv-Alembic eingefroren**). Die 3 CCR-Migrations (`app_config` / 8 Subscore-Spalten / `clubs`) sind legale additive Erweiterungen — idempotent (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`), edv bricht nicht. Umgesetzt: (1) `WSP/CLAUDE.md` — CCR in Workspace-Liste + Invarianten `:5432`/`fights`-Typen/Subscores umgeschrieben (CCR-Owner, Subscores jetzt in `fights`, Supersedes der JF-JSONL-Regel); (2) CCR-Selbstwiderspruch aufgelöst — `ccr-db/src/lib.rs`, `models.rs`, `main.rs`, `README.md`, `PLAN.md` (Leitentsch. 3 + Phase-1-Zeile): „kein Schema-Owner bis Phase 5" → „CCR-Owner seit 2026-10-01"; (3) edv `models.py::Fight` + 8 Subscore-Spalten (`default=0`, ORM-sicher, Konvention `bracket_phase`). **Phase 5 bleibt = edv-Feature-Ablösung, nicht Schema-Handover** (der ist 2026-10-01 erfolgt). **Verifiziert:** `cargo test --workspace` grün (domain 28, excel 11 — 39 gesamt) + edv-Model-Import/DDL grün; `CLAUDE.md` widerspricht dem Ist-Schema nicht.
 
 ### B4 · 🟡 Web-Port 5001 kollidiert mit JF-Backend (Strangler-Parallelbetrieb unmöglich)
 **Problem:** CCR bindet Host-Port **5001** — derselbe wie JF-Backend.
@@ -210,9 +212,10 @@ Betroffen (alle **sagen**, es sei vertagt, **Tatsache** ist es gebaut):
 **Tatsache:** `admin.rs` tut Import, CURD (Participant/Club), Config-PUT, Bracket-Generierung, Seeding, Places.
 **Fix:** Modul-Doku auf den Ist-Zustand aktualisieren.
 
-### D3 · 🔵 `ccr-db/src/lib.rs`-Invariante vs. Realität
+### D3 · ✅ `ccr-db/src/lib.rs`-Invariante vs. Realität — **umgesetzt (2026-10-01, via B3)**
 **Problem:** „Do NOT introduce migrations that diverge" (in `ccr-db/src/lib.rs`) — aber Migrations 0002/0003/0004 tun genau das (siehe B3).
 **Fix:** mit B3-Entscheidung auflösen (Text anpassen **oder** Migrations rollen).
+**Status:** aufgelöst via **B3 (Option A)** — `ccr-db/src/lib.rs` sagt jetzt „CCR owns the schema (decision 2026-10-01) … New schema changes go in `migrations/` (this crate), not edv" (statt „Do NOT diverge until Phase 5"). Text angepasst; keine Migration gerollt. Siehe `WSP/CLAUDE.md` (Invariant `:5432`).
 
 ### D4 · 🔵 Triviales / Cleanup
 - `crates/ccr-frontend/dist/index 2.html` (946 B) — macOS-„Kopie"-Artefakt; `dist/` ist **git-ignoriert** (`.gitignore:6`), also kein Repo-Problem, aber lokales Clutter → löschen.
