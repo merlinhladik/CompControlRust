@@ -16,8 +16,8 @@ use leptos::prelude::*;
 use serde_json::json;
 
 use api::{
-    fetch_matches, fetch_participants, ws_url, AdminParticipant, BracketResult, ClubInfo,
-    EditState, Match,
+    fetch_matches, fetch_participants, fetch_youth_classes, ws_url, AdminParticipant,
+    BracketResult, ClubInfo, EditState, Match,
 };
 
 fn main() {
@@ -70,6 +70,9 @@ fn App() -> impl IntoView {
     let search = RwSignal::new(String::new());
     let edit = RwSignal::new(None::<EditState>);
     let (clubs_list, set_clubs) = signal(Vec::<ClubInfo>::new());
+    // Youth rule (which classes use JVP-additive scoring) — config-driven, so the
+    // live view matches the server's `AppConfig::is_youth` instead of hardcoding.
+    let (youth, set_youth) = signal(Vec::<String>::new());
 
     // Hash-router: the nav renders plain <a href="#/…">, the browser handles
     // history, this listener keeps the route signal in sync.
@@ -119,6 +122,7 @@ fn App() -> impl IntoView {
     let tx = StoredValue::new(tx);
 
     leptos::task::spawn_local(async move { set_matches.set(fetch_matches().await); });
+    leptos::task::spawn_local(async move { set_youth.set(fetch_youth_classes().await); });
 
     leptos::task::spawn_local(async move {
         let Ok(ws) = WebSocket::open(&ws_url()) else { return };
@@ -190,12 +194,12 @@ fn App() -> impl IntoView {
         </header>
         <main>
             {move || match route.get() {
-                Route::Matte => live::list_view(matches, send).into_any(),
-                Route::Baum => live::tree_view(matches, sel_bracket, set_sel_bracket, brackets, send).into_any(),
+                Route::Matte => live::list_view(matches, youth, send).into_any(),
+                Route::Baum => live::tree_view(matches, youth, sel_bracket, set_sel_bracket, brackets, send).into_any(),
                 Route::Kaempfer => admin::participants_view(parts, set_parts, search, edit, set_clubs).into_any(),
                 Route::Listen => admin::brackets_view(results, set_results).into_any(),
                 Route::Wettkampflisten => admin::listen_view(results, set_results).into_any(),
-                Route::Einstellungen => admin::settings_view(clubs_list, set_clubs).into_any(),
+                Route::Einstellungen => admin::settings_view(clubs_list, set_clubs, set_youth).into_any(),
                 Route::Klasse(id) => admin::klasse_view(id).into_any(),
             }}
         </main>

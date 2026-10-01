@@ -9,6 +9,7 @@ use crate::api::{group_by, Match};
 /// Queue-able matches grouped into sections per mat.
 pub fn list_view(
     matches: ReadSignal<Vec<Match>>,
+    youth: ReadSignal<Vec<String>>,
     send: impl Fn(serde_json::Value) + Copy + Send + 'static,
 ) -> impl IntoView {
     let by_mat = move || {
@@ -22,10 +23,11 @@ pub fn list_view(
         </p>
         {move || by_mat().into_iter().map(|(mat, fights)| {
             let title = mat.map(|t| format!("Matte {t}")).unwrap_or_else(|| "ohne Matte".into());
+            let yc = youth.get();
             view! {
                 <section class="mat-section card">
                     <h2>{title}</h2>
-                    {fights.into_iter().map(|m| fight_row(m, send)).collect_view()}
+                    {fights.into_iter().map(|m| fight_row(m, &yc, send)).collect_view()}
                 </section>
             }
         }).collect_view()}
@@ -34,7 +36,7 @@ pub fn list_view(
 
 /// Scoring controls (JVP sub-scores for youth, ±points otherwise). Shared by the
 /// Mattenliste row and the tree node.
-fn score_buttons(m: &Match, send: impl Fn(serde_json::Value) + Copy + Send + 'static) -> Option<AnyView> {
+fn score_buttons(m: &Match, youth: &[String], send: impl Fn(serde_json::Value) + Copy + Send + 'static) -> Option<AnyView> {
     if !m.scoreable() {
         return None;
     }
@@ -48,7 +50,7 @@ fn score_buttons(m: &Match, send: impl Fn(serde_json::Value) + Copy + Send + 'st
     });
     let end = move || send(json!({"type":"STATUS_UPDATE","matchId":id,"status":"finished"}));
 
-    Some(if m.is_youth() {
+    Some(if m.is_youth(youth) {
         // JVP additive entry: +Ippon/+Waza/+Yuko/+Shido per fighter; backend
         // keeps the total + auto-finishes at ≥20. "Ende" = time-up outcome.
         view! {
@@ -80,9 +82,9 @@ fn score_buttons(m: &Match, send: impl Fn(serde_json::Value) + Copy + Send + 'st
 }
 
 /// One match as a row with scoring controls.
-fn fight_row(m: Match, send: impl Fn(serde_json::Value) + Copy + Send + 'static) -> impl IntoView {
+fn fight_row(m: Match, youth: &[String], send: impl Fn(serde_json::Value) + Copy + Send + 'static) -> impl IntoView {
     let (s1, s2) = (m.p1.score.points, m.p2.score.points);
-    let youth = m.is_youth();
+    let is_youth = m.is_youth(youth);
     // Labels + breakdown strings (cloned so the row and the breakdown line can
     // each own a copy — Leptos view closures capture by move).
     let label = format!("{} ({}) — {} ({})", m.p1.name(), s1, m.p2.name(), s2);
@@ -94,7 +96,7 @@ fn fight_row(m: Match, send: impl Fn(serde_json::Value) + Copy + Send + 'static)
     // them always (the scoring IS the breakdown).
     let expanded = RwSignal::new(false);
 
-    let buttons = score_buttons(&m, send);
+    let buttons = score_buttons(&m, youth, send);
 
     view! {
         <div>
@@ -104,12 +106,12 @@ fn fight_row(m: Match, send: impl Fn(serde_json::Value) + Copy + Send + 'static)
                     on:click=move |_| expanded.update(|e| *e = !*e)>
                     {label}
                     <span class="fight-winner">{winner_suffix}</span>
-                    {youth.then_some(" · JVP")}
+                    {is_youth.then_some(" · JVP")}
                 </span>
                 <span class=format!("badge {status}")>{status.clone()}</span>
                 {buttons}
             </div>
-            {move || (youth || expanded.get()).then(|| view! {
+            {move || (is_youth || expanded.get()).then(|| view! {
                 <div class="breakdown">{breakdown.clone()}</div>
             })}
         </div>
@@ -119,6 +121,7 @@ fn fight_row(m: Match, send: impl Fn(serde_json::Value) + Copy + Send + 'static)
 /// Pick a bracket, lay out ALL its fights (incl. TBD) by phase + round.
 pub fn tree_view(
     matches: ReadSignal<Vec<Match>>,
+    youth: ReadSignal<Vec<String>>,
     sel: ReadSignal<Option<i64>>,
     set_sel: WriteSignal<Option<i64>>,
     brackets: impl Fn() -> Vec<(i64, String)> + Copy + Send + 'static,
@@ -156,10 +159,11 @@ pub fn tree_view(
         </div>
         <div class="tree">
             {move || columns().into_iter().map(|((phase, round), fights)| {
+                let yc = youth.get();
                 view! {
                     <div class="tree-col">
                         <h3>{format!("{} · R{}", phase_label(&phase), round + 1)}</h3>
-                        {fights.into_iter().map(|m| tree_node(m, send)).collect_view()}
+                        {fights.into_iter().map(|m| tree_node(m, &yc, send)).collect_view()}
                     </div>
                 }
             }).collect_view()}
@@ -172,10 +176,10 @@ fn phase_rank(p: &str) -> i64 {
 }
 
 /// One fight box in the tree (TBD-aware; scoring inline when scoreable).
-fn tree_node(m: Match, send: impl Fn(serde_json::Value) + Copy + Send + 'static) -> impl IntoView {
+fn tree_node(m: Match, youth: &[String], send: impl Fn(serde_json::Value) + Copy + Send + 'static) -> impl IntoView {
     let (s1, s2) = (m.p1.score.points, m.p2.score.points);
     let state = if m.status == "finished" { "finished" } else if m.scoreable() { "" } else { "idle" };
-    let buttons = score_buttons(&m, send);
+    let buttons = score_buttons(&m, youth, send);
     view! {
         <div class=format!("tree-node {state}")>
             <div class="nr">{format!("#{}", m.fight_nr)}</div>

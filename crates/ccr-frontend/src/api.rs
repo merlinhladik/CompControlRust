@@ -79,9 +79,11 @@ impl Match {
     pub fn scoreable(&self) -> bool {
         self.p1.present() && self.p2.present() && self.status != "finished" && self.status != "bye"
     }
-    /// U9/U11 use the JVP additive system (Ippon10/Waza5/Yuko3/Shido+2, ≥20 wins).
-    pub fn is_youth(&self) -> bool {
-        self.age_group == "U9" || self.age_group == "U11"
+    /// True when this match's age group is a youth class (JVP additive:
+    /// Ippon10/Waza5/Yuko3/Shido+2, ≥20 wins). `youth_classes` is the server's
+    /// config-driven rule (`AppConfig::is_youth`) so the UI never drifts from it.
+    pub fn is_youth(&self, youth_classes: &[String]) -> bool {
+        youth_classes.iter().any(|y| y == &self.age_group)
     }
     pub fn listable(&self) -> bool {
         (self.p1.present() && self.p2.present()) || self.status == "finished" || self.status == "bye"
@@ -232,6 +234,20 @@ pub async fn fetch_results() -> Vec<BracketResult> {
 pub async fn fetch_matches() -> Vec<Match> {
     match gloo_net::http::Request::get("/api/matches").send().await {
         Ok(resp) => resp.json::<MatchesResp>().await.map(|r| r.matches).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ConfigResp {
+    #[serde(default)]
+    youth_classes: Vec<String>,
+}
+/// Configured youth classes from `/api/config` — the same list the server uses
+/// for its `is_youth` rule (drives the JVP-additive scoring path in the UI).
+pub async fn fetch_youth_classes() -> Vec<String> {
+    match gloo_net::http::Request::get("/api/config").send().await {
+        Ok(r) => r.json::<ConfigResp>().await.map(|c| c.youth_classes).unwrap_or_default(),
         Err(_) => Vec::new(),
     }
 }

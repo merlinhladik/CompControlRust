@@ -74,7 +74,7 @@ für Rep-Struktur prüfen.
 
 ## B. Korrektheits- & Drift-Risiken
 
-### B1 · 🟠 Frontend hardcodet Jugend = U9/U11, Server nutzt konfigurierbare `youth_classes`
+### B1 · ✅ Frontend hardcodet Jugend = U9/U11, Server nutzt konfigurierbare `youth_classes` — ** umgesetzt (2026-10-01)**
 **Problem:**
 - `ccr-frontend/src/api.rs:83-84` — `is_youth() => age_group == "U9" || "U11"` (hart).
 - `ccr-db/src/app_config.rs:69-71` — `is_youth()` via `youth_classes` (konfigurierbar).
@@ -85,6 +85,13 @@ Zwei „Wahrheiten" über Jugend-Regeln.
 
 **Fix:** Frontend liest `youth_classes` aus `/api/config` statt hardcoden; `is_youth`-Helfer serverseitig spiegeln.
 **Verifikation:** `youth_classes` auf U13 stellen → U13-Kampf zeigt JVP-Additiv in UI **und** Server.
+
+**Status:** umgesetzt. Frontend liest jetzt `youth_classes` aus `/api/config`
+(`api.rs::fetch_youth_classes`) und `Match::is_youth(&[String])` spiegelt die Server-Regel
+(`AppConfig::is_youth`) 1:1. `youth`-Signal in `main.rs` wird beim Start geladen und nach
+`PUT /api/config` (`ConfigPanel`) aktualisiert → Live-View reagiert auf Konfig-Änderung ohne
+Reload. Default-Seed bleibt `["U9","U11"]` = identisches Verhalten wie zuvor. `cargo check
+-p ccr-frontend --target wasm32-unknown-unknown` + `cargo test --workspace` (domain 29, excel 11) grün.
 
 ### B2 · 🟡 Doppelte Threshold-Tabelle (eine davon tot)
 **Problem:**

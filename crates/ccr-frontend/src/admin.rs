@@ -675,10 +675,11 @@ pub fn brackets_view(
 pub fn settings_view(
     clubs_list: ReadSignal<Vec<ClubInfo>>,
     set_clubs: WriteSignal<Vec<ClubInfo>>,
+    set_youth: WriteSignal<Vec<String>>,
 ) -> impl IntoView {
     leptos::task::spawn_local(async move { set_clubs.set(fetch_clubs().await); });
     view! {
-        <ConfigPanel/>
+        <ConfigPanel set_youth=set_youth/>
         <LocksPanel/>
         {clubs_panel(clubs_list, set_clubs)}
     }
@@ -859,7 +860,7 @@ struct ConfigData {
 /// Editor for the classification config: generation thresholds, youth pool size,
 /// and the per-birthyear age classes (multiple classes = doublestart overlap).
 #[component]
-fn ConfigPanel() -> impl IntoView {
+fn ConfigPanel(set_youth: WriteSignal<Vec<String>>) -> impl IntoView {
     let cfg = RwSignal::new(None::<ConfigData>);
     leptos::task::spawn_local(async move {
         if let Ok(r) = gloo_net::http::Request::get("/api/config").send().await {
@@ -870,6 +871,7 @@ fn ConfigPanel() -> impl IntoView {
     });
     let save = move || {
         let Some(c) = cfg.get() else { return };
+        let yc = c.youth_classes.clone();
         leptos::task::spawn_local(async move {
             let _ = gloo_net::http::Request::put("/api/config")
                 .header("content-type", "application/json")
@@ -877,6 +879,9 @@ fn ConfigPanel() -> impl IntoView {
                 .unwrap()
                 .send()
                 .await;
+            // Keep the live view's youth rule in sync with the saved config —
+            // the same source of truth as the server's `AppConfig::is_youth`.
+            set_youth.set(yc);
         });
     };
     let methods = ["special", "pools", "double", "ko", "repechage"];
