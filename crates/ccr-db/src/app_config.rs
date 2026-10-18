@@ -23,6 +23,20 @@ pub struct WeightClassDef {
     pub label: String,
 }
 
+/// Per-class rules (the "Regeln je Klasse" table in Einstellungen).
+/// `mixed` = one shared group across genders (no weight classes);
+/// `pool_only` = always played as pools; `jvp` = JVP additive scoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassRule {
+    pub age_group: String,
+    #[serde(default)]
+    pub mixed: bool,
+    #[serde(default)]
+    pub pool_only: bool,
+    #[serde(default)]
+    pub jvp: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BirthYearRow {
     pub year: i64,
@@ -33,7 +47,12 @@ pub struct BirthYearRow {
 pub struct AppConfig {
     pub event_year: i64,
     pub age_classes: Vec<String>,        // ordered, e.g. U9..18+
-    pub youth_classes: Vec<String>,      // pool-only classes (U9, U11)
+    /// Per-class rules (mixed / pool-only / JVP). Legacy docs only carry
+    /// `youth_classes` — `migrate` derives the rules from it.
+    #[serde(default)]
+    pub class_rules: Vec<ClassRule>,
+    /// LEGACY: superseded by `class_rules` (kept so old docs round-trip).
+    pub youth_classes: Vec<String>,
     pub youth_pool_size: i32,            // e.g. 4
     /// Max in-pool weight spread (kg) for youth pool cutting; ≤0 = no weight cut
     /// (pool-size split only). See ccr-domain `split_into_pools`.
@@ -45,13 +64,47 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    /// Bracket type for `n` fighters in `age_group`. Youth classes are always
-    /// pools; otherwise the highest `min_fighters ≤ n` adult method applies.
+    /// The per-class rule for `age_group` (None = no rule, i.e. separated
+    /// gender, method-driven, no JVP).
+    pub fn rule(&self, age_group: Option<&str>) -> Option<&ClassRule> {
+        age_group.and_then(|a| self.class_rules.iter().find(|r| r.age_group == a))
+    }
+
+    /// True when the class plays all genders in one group (no weight classes).
+    pub fn is_mixed(&self, age_group: Option<&str>) -> bool {
+        self.rule(age_group).is_some_and(|r| r.mixed)
+    }
+
+    /// True when the class always plays pools (never the method thresholds).
+    pub fn is_pool_only(&self, age_group: Option<&str>) -> bool {
+        self.rule(age_group).is_some_and(|r| r.pool_only)
+    }
+
+    /// Legacy migration: configs saved before `class_rules` only have
+    /// `youth_classes` — those classes were mixed, pool-only AND JVP.
+    /// Idempotent (only applies while `class_rules` is still empty).
+    pub fn migrate(self) -> AppConfig {
+        let mut cfg = self;
+        if cfg.class_rules.is_empty() && !cfg.youth_classes.is_empty() {
+            cfg.class_rules = cfg
+                .youth_classes
+                .iter()
+                .map(|a| ClassRule {
+                    age_group: a.clone(),
+                    mixed: true,
+                    pool_only: true,
+                    jvp: true,
+                })
+                .collect();
+        }
+        cfg
+    }
+
+    /// Bracket type for `n` fighters in `age_group`. Pool-only classes are
+    /// always pools; otherwise the highest `min_fighters ≤ n` method applies.
     pub fn recommend(&self, n: usize, age_group: Option<&str>) -> String {
-        if let Some(a) = age_group {
-            if self.youth_classes.iter().any(|y| y == a) {
-                return "pools".into();
-            }
+        if self.is_pool_only(age_group) {
+            return "pools".into();
         }
         let n = n as i32;
         let mut chosen = "special";
@@ -65,9 +118,9 @@ impl AppConfig {
         chosen.to_string()
     }
 
-    /// True if `age_group` is a youth class (JVP-Additiv-20 additive scoring: U9/U11).
+    /// True when `age_group` uses JVP-Additiv-20 additive scoring.
     pub fn is_youth(&self, age_group: Option<&str>) -> bool {
-        matches!(age_group, Some(a) if self.youth_classes.iter().any(|y| y == a))
+        self.rule(age_group).is_some_and(|r| r.jvp)
     }
 
     /// Eligible age groups for a birth year (config; >1 = doublestart overlap).
@@ -93,11 +146,12 @@ impl AppConfig {
     }
 }
 
-/// Load the config row, or None if not yet seeded.
+/// Load the config row, or None if not yet seeded. Legacy docs (pre-
+/// `class_rules`) come back with the rules derived from `youth_classes`.
 pub async fn load(pool: &PgPool) -> Result<Option<AppConfig>, sqlx::Error> {
     let row: Option<sqlx::types::Json<AppConfig>> =
         sqlx::query_scalar("SELECT data FROM app_config WHERE id = 1").fetch_optional(pool).await?;
-    Ok(row.map(|j| j.0))
+    Ok(row.map(|j| j.0.migrate()))
 }
 
 /// Upsert the single config row.

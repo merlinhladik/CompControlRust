@@ -53,13 +53,14 @@ All exports are `GET` endpoints (download unless noted); the frontend admin link
 | `/api/export/results.xlsx` · `.pdf` | Ergebnisliste (results) |
 | `/api/export/urkunden.xlsx` | Urkunden (certificates) — one row per placement |
 | `/api/export/urkunden.csv` | Urkunden as a **merge source** (Affinity Publisher / LibreOffice data merge) |
-| `/api/export/wiegekarten.xlsx` · `.pdf` | Wiegekarten-**Liste** — weigh-in roster, blank Gewicht/Unterschrift |
+| `/api/export/wiegekarten.xlsx` | Wiegekarten-**Liste** — weigh-in roster, blank Gewicht/Unterschrift |
+| `/api/export/wiegekarten.pdf` | Wiegekarten as **printable cards** — 6 cards per A4 portrait page (3 × 2), blank Gewicht line, no Unterschrift |
 | `/api/export/wiegekarten.csv` | Wiegekarten as a **merge source** — design the card once in Affinity, data merge → print |
-| `/print/wiegekarten` | Print-ready HTML cards (2-up, ~10/page); open in a browser, Cmd/Ctrl+P (also saves a PDF) |
+| `/print/wiegekarten` | Print-ready HTML cards (6 per A4 portrait page, 3 × 2); open in a browser, Cmd/Ctrl+P (also saves a PDF) |
 
 Weigh-in cards are **weight-independent** — the age class is derived from the birth
 year, so the roster can be imported and the cards printed *before* the weigh-in (the
-Gewicht/Unterschrift lines are filled by hand at the scale). The `.csv` merge sources
+blank Gewicht line is filled by hand at the scale). The `.csv` merge sources
 carry the participant `id` as the merge key (and a QR/barcode value for the WeighIn
 scanner).
 

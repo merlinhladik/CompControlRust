@@ -1,104 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! API data models + fetch helpers shared by the live and admin views.
+//! API data models + fetch helpers for the admin views.
 
 use serde::Deserialize;
-
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-pub struct Score {
-    pub points: i32,
-    #[serde(default)]
-    pub ippon: i32,
-    #[serde(default)]
-    pub wazari: i32,
-    #[serde(default)]
-    pub yuko: i32,
-    #[serde(default)]
-    pub shido: i32,
-}
-impl Score {
-    /// Compact breakdown of the actual sub-scores (shown on fight click).
-    pub fn breakdown(&self) -> String {
-        format!("I{} W{} Y{} S{}", self.ippon, self.wazari, self.yuko, self.shido)
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-pub struct Fighter {
-    #[serde(rename = "firstName", default)]
-    pub first_name: String,
-    #[serde(rename = "lastName", default)]
-    pub last_name: String,
-    #[serde(default)]
-    pub score: Score,
-}
-impl Fighter {
-    pub fn name(&self) -> String {
-        let n = format!("{} {}", self.first_name, self.last_name);
-        let n = n.trim();
-        if n.is_empty() { "—".into() } else { n.to_string() }
-    }
-    pub fn present(&self) -> bool {
-        !self.last_name.is_empty() && self.last_name != "TBD"
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-pub struct Match {
-    #[serde(rename = "matchId")]
-    pub match_id: i64,
-    #[serde(rename = "fightNr", default)]
-    pub fight_nr: i64,
-    #[serde(rename = "tableId", default)]
-    pub table_id: Option<i64>,
-    #[serde(rename = "bracketId", default)]
-    pub bracket_id: i64,
-    #[serde(rename = "bracketType", default)]
-    pub bracket_type: String,
-    #[serde(default)]
-    pub gender: String,
-    #[serde(rename = "ageGroup", default)]
-    pub age_group: String,
-    #[serde(rename = "weightClass", default)]
-    pub weight_class: String,
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default)]
-    pub round: i64,
-    #[serde(rename = "posInRound", default)]
-    pub pos_in_round: i64,
-    #[serde(default)]
-    pub p1: Fighter,
-    #[serde(default)]
-    pub p2: Fighter,
-    #[serde(default)]
-    pub status: String,
-    #[serde(rename = "winnerName", default)]
-    pub winner_name: String,
-}
-impl Match {
-    pub fn scoreable(&self) -> bool {
-        self.p1.present() && self.p2.present() && self.status != "finished" && self.status != "bye"
-    }
-    /// True when this match's age group is a youth class (JVP additive:
-    /// Ippon10/Waza5/Yuko3/Shido+2, ≥20 wins). `youth_classes` is the server's
-    /// config-driven rule (`AppConfig::is_youth`) so the UI never drifts from it.
-    pub fn is_youth(&self, youth_classes: &[String]) -> bool {
-        youth_classes.iter().any(|y| y == &self.age_group)
-    }
-    pub fn listable(&self) -> bool {
-        (self.p1.present() && self.p2.present()) || self.status == "finished" || self.status == "bye"
-    }
-    pub fn category(&self) -> String {
-        format!("{} {} {}", self.gender, self.weight_class, self.bracket_type)
-            .split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-}
-
-#[derive(Deserialize)]
-struct MatchesResp {
-    #[serde(default)]
-    matches: Vec<Match>,
-}
 
 // ── Admin read models ────────────────────────────────────────────────────────
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -149,6 +52,15 @@ pub struct BracketResult {
     pub third1: String,
     #[serde(default)]
     pub third2: String,
+    // Club of each placed fighter — feeds the "Auswertungen" view.
+    #[serde(rename = "firstClub", default)]
+    pub first_club: String,
+    #[serde(rename = "secondClub", default)]
+    pub second_club: String,
+    #[serde(rename = "third1Club", default)]
+    pub third1_club: String,
+    #[serde(rename = "third2Club", default)]
+    pub third2_club: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -230,47 +142,4 @@ pub async fn fetch_results() -> Vec<BracketResult> {
         Ok(r) => r.json::<BracketsResp>().await.map(|x| x.brackets).unwrap_or_default(),
         Err(_) => Vec::new(),
     }
-}
-pub async fn fetch_matches() -> Vec<Match> {
-    match gloo_net::http::Request::get("/api/matches").send().await {
-        Ok(resp) => resp.json::<MatchesResp>().await.map(|r| r.matches).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
-}
-
-#[derive(Deserialize)]
-struct ConfigResp {
-    #[serde(default)]
-    youth_classes: Vec<String>,
-}
-/// Configured youth classes from `/api/config` — the same list the server uses
-/// for its `is_youth` rule (drives the JVP-additive scoring path in the UI).
-pub async fn fetch_youth_classes() -> Vec<String> {
-    match gloo_net::http::Request::get("/api/config").send().await {
-        Ok(r) => r.json::<ConfigResp>().await.map(|c| c.youth_classes).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
-}
-
-pub fn ws_url() -> String {
-    let loc = web_sys::window().unwrap().location();
-    let proto = if loc.protocol().unwrap_or_default() == "https:" { "wss" } else { "ws" };
-    let host = loc.host().unwrap_or_else(|_| "localhost:5001".into());
-    format!("{proto}://{host}/ws")
-}
-
-/// Group items into (key, items) preserving first-seen key order.
-pub fn group_by<T: Clone, K: PartialEq + Clone>(
-    items: &[T],
-    key: impl Fn(&T) -> K,
-) -> Vec<(K, Vec<T>)> {
-    let mut out: Vec<(K, Vec<T>)> = Vec::new();
-    for it in items {
-        let k = key(it);
-        match out.iter_mut().find(|(gk, _)| *gk == k) {
-            Some((_, v)) => v.push(it.clone()),
-            None => out.push((k, vec![it.clone()])),
-        }
-    }
-    out
 }

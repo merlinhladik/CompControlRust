@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Admin tabs: Kämpfer (participants + import + edit overlay), Listen &
-//! Ergebnisse (group assignment, bracket generation, results, exports) and
-//! Einstellungen (config, age-class locks, clubs).
+//! Ergebnisse (group assignment, bracket generation, results, exports),
+//! Wettkampflisten (filtered preview + print), Auswertungen (placements per
+//! club) and Einstellungen (config, age-class locks).
 
 use leptos::prelude::*;
 use serde_json::json;
@@ -446,15 +447,51 @@ pub fn klasse_view(bracket_id: i64) -> impl IntoView {
 
 // ── Tab: Wettkampflisten (Ansicht + Einzeldruck) ─────────────────────────────
 
+/// Filter value for a bracket that carries no such attribute: mixed youth pools
+/// (U9/U11) have NULL gender / NULL weight_class, so they surface as this chip.
+static MIXED: &str = "gemischt";
+
+/// Each bracket's filter key per dimension (a NULL attribute maps to MIXED so a
+/// mixed youth pool becomes a first-class, selectable value).
+fn age_of(b: &BracketResult) -> String {
+    b.age_group.clone().unwrap_or_default()
+}
+fn gender_of(b: &BracketResult) -> String {
+    b.gender.clone().unwrap_or_else(|| MIXED.to_string())
+}
+fn weight_of(b: &BracketResult) -> String {
+    b.weight_class.clone().unwrap_or_else(|| MIXED.to_string())
+}
+
 /// Sort keys so filter chips appear in natural order (U9 < U11 < … < 18+,
-/// -24kg < … < +66kg). Mixed/None fields always pass a non-empty filter.
+/// -24kg < … < +66kg). The MIXED chip always sorts last within a row.
 fn age_key(a: &str) -> i32 {
     let n: i32 = a.trim_start_matches('U').trim_end_matches('+').parse().unwrap_or(9999);
     if a.starts_with('U') { n } else { 1000 + n } // "18+" etc. after all U-classes
 }
+fn gender_key(g: &str) -> i32 {
+    match g { "m" => 0, "w" => 1, _ => 2 } // m < w < gemischt
+}
 fn weight_key(w: &str) -> i32 {
+    if w == MIXED {
+        return i32::MAX;
+    }
     let n: i32 = w.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
     if w.starts_with('+') { 1000 + n } else { n }
+}
+
+/// Distinct + sorted filter chips for a set of brackets, one per `key` value.
+fn chips(rows: &[BracketResult], key: fn(&BracketResult) -> String, sort: fn(&str) -> i32) -> Vec<String> {
+    let mut v: Vec<String> = rows.iter().map(|b| key(b)).collect();
+    v.sort_by_key(|s| sort(s.as_str()));
+    v.dedup();
+    v
+}
+
+/// Keep only the selected values that still exist among the available chips, so
+/// a selection invalidated by a higher-level filter stops hiding valid brackets.
+fn prune(sel: Vec<String>, opts: &[String]) -> Vec<String> {
+    sel.into_iter().filter(|v| opts.contains(v)).collect()
 }
 fn toggle_in(sig: RwSignal<Vec<String>>, v: &str) {
     sig.update(|s| match s.iter().position(|x| x == v) {
@@ -484,9 +521,12 @@ fn chip_row(
     }
 }
 
-/// Filter the generated lists by Altersklasse/Geschlecht/Gewichtsklasse (each
-/// multi-select), preview all matching lists in the print layout and print them
-/// (one page per list). Mixed youth pools (no gender/weight) match any filter.
+/// Filter the generated lists by Altersklasse → Geschlecht → Gewichtsklasse as a
+/// cascading (faceted) filter: each level's chips come from the brackets already
+/// narrowed by the levels above, and the result is the AND of all selections.
+/// Mixed youth pools (NULL gender / weight_class) surface as a selectable
+/// "gemischt" chip. Previews all matching lists in the print layout (one page
+/// per list) and prints them.
 pub fn listen_view(
     results: ReadSignal<Vec<BracketResult>>,
     set_results: WriteSignal<Vec<BracketResult>>,
@@ -497,37 +537,30 @@ pub fn listen_view(
     let sel_weight = RwSignal::new(Vec::<String>::new());
     let frame = NodeRef::<leptos::html::Iframe>::new();
 
+    // Cascading narrowing: age → gender → weight, each AND'd on top of the last.
     let listed = move || {
         results.get().into_iter().filter(|b| b.bracket_type.is_some()).collect::<Vec<_>>()
     };
-    let ages = move || {
-        let mut v: Vec<String> = listed().iter().filter_map(|b| b.age_group.clone()).collect();
-        v.sort_by_key(|a| age_key(a));
-        v.dedup();
-        v
+    let by_age = move || {
+        let sel = sel_age.get();
+        listed().into_iter().filter(|b| sel.is_empty() || sel.contains(&age_of(b))).collect::<Vec<_>>()
     };
-    let genders = move || {
-        let mut v: Vec<String> = listed().iter().filter_map(|b| b.gender.clone()).collect();
-        v.sort();
-        v.dedup();
-        v
+    let by_age_gender = move || {
+        let rows = by_age();
+        let sel = prune(sel_gender.get(), &chips(&rows, gender_of, gender_key));
+        rows.into_iter().filter(|b| sel.is_empty() || sel.contains(&gender_of(b))).collect::<Vec<_>>()
     };
-    let weights = move || {
-        let mut v: Vec<String> = listed().iter().filter_map(|b| b.weight_class.clone()).collect();
-        v.sort_by_key(|w| weight_key(w));
-        v.dedup();
-        v
+    let matching = move || {
+        let rows = by_age_gender();
+        let sel = prune(sel_weight.get(), &chips(&rows, weight_of, weight_key));
+        rows.into_iter().filter(|b| sel.is_empty() || sel.contains(&weight_of(b))).collect::<Vec<_>>()
     };
 
-    let matching = move || {
-        let (a, g, w) = (sel_age.get(), sel_gender.get(), sel_weight.get());
-        let ok = |sel: &Vec<String>, val: &Option<String>| {
-            sel.is_empty() || val.as_ref().map(|v| sel.contains(v)).unwrap_or(true)
-        };
-        listed().into_iter()
-            .filter(|b| ok(&a, &b.age_group) && ok(&g, &b.gender) && ok(&w, &b.weight_class))
-            .collect::<Vec<_>>()
-    };
+    // Available chips per level (cascading): age over all, gender over the
+    // age-narrowed set, weight over the age+gender-narrowed set.
+    let ages = move || chips(&listed(), age_of, age_key);
+    let genders = move || chips(&by_age(), gender_of, gender_key);
+    let weights = move || chips(&by_age_gender(), weight_of, weight_key);
     let src = move || {
         let ids: Vec<String> = matching().iter().map(|b| b.id.to_string()).collect();
         format!("/print/listen?ids={}", ids.join(","))
@@ -554,6 +587,108 @@ pub fn listen_view(
             </div>
         </div>
         <iframe class="preview-frame" node_ref=frame src=src />
+    }
+}
+
+// ── Tab: Auswertungen (Platzierungen pro Verein + Altersklasse) ──────────────
+
+/// One flat placement row: club, class, list and the placed fighter.
+#[derive(Clone)]
+struct PlatzRow {
+    club: String,
+    age: String,
+    weight: String,
+    kategorie: String,
+    name: String,
+    platz: i32,
+    platz_label: String,
+}
+
+/// All awarded placements (1./2./3./3.) of the completed lists, grouped by
+/// club → age class → place. The age-class chips filter the view.
+pub fn auswertungen_view(
+    results: ReadSignal<Vec<BracketResult>>,
+    set_results: WriteSignal<Vec<BracketResult>>,
+) -> impl IntoView {
+    leptos::task::spawn_local(async move { set_results.set(fetch_results().await); });
+    let sel_age = RwSignal::new(Vec::<String>::new());
+
+    let all = move || {
+        let mut out: Vec<PlatzRow> = Vec::new();
+        for b in results.get() {
+            if b.status.as_deref() != Some("completed") {
+                continue;
+            }
+            let age = age_of(&b);
+            let weight = weight_of(&b);
+            let cat = b.category.clone();
+            let entries = [
+                (b.first.clone(), b.first_club.clone(), 1i32),
+                (b.second.clone(), b.second_club.clone(), 2),
+                (b.third1.clone(), b.third1_club.clone(), 3),
+                (b.third2.clone(), b.third2_club.clone(), 3),
+            ];
+            for (name, club, platz) in entries {
+                if name.is_empty() {
+                    continue;
+                }
+                out.push(PlatzRow {
+                    club: if club.is_empty() { "—".into() } else { club },
+                    age: age.clone(),
+                    weight: weight.clone(),
+                    kategorie: cat.clone(),
+                    name,
+                    platz,
+                    platz_label: if platz <= 2 { format!("{platz}.") } else { "3.".into() },
+                });
+            }
+        }
+        out
+    };
+    let rows = move || {
+        let mut v = all();
+        let sel = sel_age.get();
+        v.retain(|r| sel.is_empty() || sel.contains(&r.age));
+        v.sort_by(|a, b| {
+            (a.club.as_str(), age_key(&a.age), a.platz, a.kategorie.as_str())
+                .cmp(&(b.club.as_str(), age_key(&b.age), b.platz, b.kategorie.as_str()))
+        });
+        v
+    };
+    let ages = move || chips(&results.get(), age_of, age_key);
+    let count = move || all().len();
+
+    view! {
+        <div class="card">
+            {chip_row("Altersklasse", ages, sel_age)}
+            <div class="toolbar" style="margin-top:0.5rem;">
+                <button on:click=move |_| sel_age.set(vec![])>"Filter zurücksetzen"</button>
+                <span class="muted">{move || format!("{} Platzierungen (1. – 3.)", count())}</span>
+            </div>
+        </div>
+
+        <div class="card scroll-x">
+            <table>
+                <thead><tr>
+                    <th>"Verein"</th><th>"Altersklasse"</th><th>"Klasse/Pool"</th>
+                    <th>"Liste"</th><th>"Kämpfer"</th><th>"Platz"</th>
+                </tr></thead>
+                <tbody>
+                    {move || rows().into_iter().map(|r| {
+                        view! {
+                            <tr>
+                                <td>{r.club}</td>
+                                <td>{r.age}</td>
+                                <td class="muted">{r.weight}</td>
+                                <td class="muted">{r.kategorie}</td>
+                                <td>{r.name}</td>
+                                <td>{r.platz_label}</td>
+                            </tr>
+                        }
+                    }).collect_view()}
+                </tbody>
+            </table>
+        </div>
     }
 }
 
@@ -600,6 +735,38 @@ pub fn brackets_view(
         });
     };
 
+    // Delete one list (bracket + its fights), with a confirm, then reload.
+    let delete_list = move |bracket_id: i64| {
+        let ok = web_sys::window()
+            .and_then(|w| w.confirm_with_message("Liste inklusive aller Kämpfe löschen?").ok())
+            .unwrap_or(false);
+        if !ok {
+            return;
+        }
+        leptos::task::spawn_local(async move {
+            let _ = gloo_net::http::Request::delete(&format!("/api/brackets/{bracket_id}"))
+                .send()
+                .await;
+            set_results.set(fetch_results().await);
+        });
+    };
+    // Delete ALL lists at once (explicit operator action; results are gone).
+    let delete_all_lists = move |_| {
+        let ok = web_sys::window()
+            .and_then(|w| {
+                w.confirm_with_message("ALLE Listen löschen? Bereits erkannte Ergebnisse gehen verloren.")
+                    .ok()
+            })
+            .unwrap_or(false);
+        if !ok {
+            return;
+        }
+        leptos::task::spawn_local(async move {
+            let _ = gloo_net::http::Request::delete("/api/brackets").send().await;
+            set_results.set(fetch_results().await);
+        });
+    };
+
     view! {
         <div class="card toolbar">
             <button on:click=move |_| {
@@ -614,6 +781,7 @@ pub fn brackets_view(
                     set_results.set(fetch_results().await);
                 });
             }>"Listen erstellen (Brackets generieren)"</button>
+            <button on:click=delete_all_lists>"🗑 Alle Listen löschen"</button>
             <button on:click=print_selected>
                 {move || format!("🖨 Ausgewählte drucken ({})", selected.get().len())}
             </button>
@@ -660,6 +828,9 @@ pub fn brackets_view(
                                         on:click=move |_| { if let Some(w) = web_sys::window() { let _ = w.location().set_hash(&format!("/klasse/{id}")); } }>
                                         "🏆"
                                     </button>
+                                    " "
+                                    <button class="icon danger" title="Liste löschen"
+                                        on:click=move |_| delete_list(id)>"🗑"</button>
                                 </td>
                             </tr>
                         }
@@ -670,27 +841,16 @@ pub fn brackets_view(
     }
 }
 
-// ── Tab: Einstellungen ───────────────────────────────────────────────────────
+// ── Tab: Vereine ─────────────────────────────────────────────────────────────
 
-pub fn settings_view(
+/// Club master data (own tab, like Kämpfer): add, rename (cascades onto
+/// fighters), delete (blocked while fighters reference the club). Feeds the
+/// fighter-editor dropdown.
+pub fn clubs_view(
     clubs_list: ReadSignal<Vec<ClubInfo>>,
     set_clubs: WriteSignal<Vec<ClubInfo>>,
-    set_youth: WriteSignal<Vec<String>>,
 ) -> impl IntoView {
     leptos::task::spawn_local(async move { set_clubs.set(fetch_clubs().await); });
-    view! {
-        <ConfigPanel set_youth=set_youth/>
-        <LocksPanel/>
-        {clubs_panel(clubs_list, set_clubs)}
-    }
-}
-
-/// Club master data: add, rename (cascades onto fighters), delete (blocked
-/// while fighters reference the club). Feeds the editor dropdown.
-fn clubs_panel(
-    clubs_list: ReadSignal<Vec<ClubInfo>>,
-    set_clubs: WriteSignal<Vec<ClubInfo>>,
-) -> impl IntoView {
     let new_name = RwSignal::new(String::new());
     let new_assoc = RwSignal::new(String::new());
     let msg = RwSignal::new(String::new());
@@ -769,6 +929,17 @@ fn clubs_panel(
     }
 }
 
+// ── Tab: Einstellungen ───────────────────────────────────────────────────────
+
+/// Settings: the tournament config (Klassen-Konfiguration) + age-class locks.
+/// Clubs live in their own tab now (Vereine).
+pub fn settings_view() -> impl IntoView {
+    view! {
+        <ConfigPanel />
+        <LocksPanel />
+    }
+}
+
 /// Age-class locks panel (own reactive scope): list + add + remove.
 #[component]
 fn LocksPanel() -> impl IntoView {
@@ -839,11 +1010,26 @@ struct WcRow {
     max_weight: f64,
     label: String,
 }
+/// Per-class rules: `mixed` = one shared group across genders, `pool_only` =
+/// always played as pools, `jvp` = JVP additive scoring (Ippon 10 / Waza 5 …).
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct ClassRule {
+    age_group: String,
+    #[serde(default)]
+    mixed: bool,
+    #[serde(default)]
+    pool_only: bool,
+    #[serde(default)]
+    jvp: bool,
+}
 #[derive(Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 struct ConfigData {
     event_year: i64,
     #[serde(default)]
     age_classes: Vec<String>,
+    #[serde(default)]
+    class_rules: Vec<ClassRule>,
+    // legacy: kept round-trip stable, derived from class_rules on the server
     #[serde(default)]
     youth_classes: Vec<String>,
     youth_pool_size: i32,
@@ -857,10 +1043,12 @@ struct ConfigData {
     weight_classes: Vec<WcRow>,
 }
 
-/// Editor for the classification config: generation thresholds, youth pool size,
-/// and the per-birthyear age classes (multiple classes = doublestart overlap).
+/// Editor for the tournament config, in workflow order: 1 · age classes,
+/// 2 · per-class rules (mixed gender / pool-only / JVP), 3 · method
+/// thresholds + birth years, 4 · weight classes. Saving gives explicit
+/// feedback (success / error), incl. how many stale lists a mode change wiped.
 #[component]
-fn ConfigPanel(set_youth: WriteSignal<Vec<String>>) -> impl IntoView {
+fn ConfigPanel() -> impl IntoView {
     let cfg = RwSignal::new(None::<ConfigData>);
     leptos::task::spawn_local(async move {
         if let Ok(r) = gloo_net::http::Request::get("/api/config").send().await {
@@ -869,42 +1057,126 @@ fn ConfigPanel(set_youth: WriteSignal<Vec<String>>) -> impl IntoView {
             }
         }
     });
+    // Save with explicit feedback (success / server error / network error).
+    let save_msg = RwSignal::new(String::new());
     let save = move || {
-        let Some(c) = cfg.get() else { return };
-        let yc = c.youth_classes.clone();
+        let Some(mut c) = cfg.get() else { return };
+        // Rules for renamed/removed classes would go stale — drop them.
+        c.class_rules.retain(|r| c.age_classes.iter().any(|a| a == &r.age_group));
+        save_msg.set("Speichert…".into());
         leptos::task::spawn_local(async move {
-            let _ = gloo_net::http::Request::put("/api/config")
+            match gloo_net::http::Request::put("/api/config")
                 .header("content-type", "application/json")
                 .body(serde_json::to_string(&c).unwrap())
                 .unwrap()
                 .send()
-                .await;
-            // Keep the live view's youth rule in sync with the saved config —
-            // the same source of truth as the server's `AppConfig::is_youth`.
-            set_youth.set(yc);
+                .await
+            {
+                Ok(r) if r.ok() => {
+                    let v = r.json::<serde_json::Value>().await.unwrap_or_default();
+                    match v.get("listsDeleted").and_then(|x| x.as_u64()) {
+                        Some(n) if n > 0 => save_msg.set(format!(
+                            "✓ Gespeichert — Modus geändert, {n} veraltete{} Listen entfernt",
+                            if n == 1 { "" } else { "n" }
+                        )),
+                        _ => save_msg.set("✓ Konfiguration gespeichert".into()),
+                    }
+                }
+                Ok(r) => {
+                    let v = r.json::<serde_json::Value>().await.unwrap_or_default();
+                    save_msg.set(format!(
+                        "Speichern fehlgeschlagen: {}",
+                        v.get("error").and_then(|e| e.as_str()).unwrap_or("unbekannter Fehler")
+                    ));
+                }
+                Err(e) => save_msg.set(format!("Speichern fehlgeschlagen: {e}")),
+            }
+        });
+    };
+    // Rule accessors: look up the rule for one age class, creating it on first
+    // touch (flags default to false).
+    let rule_get = move |a: String, f: fn(&ClassRule) -> bool| move || {
+        cfg.with(|c| {
+            c.as_ref()
+                .and_then(|c| c.class_rules.iter().find(|r| r.age_group == a))
+                .map(f)
+                .unwrap_or(false)
+        })
+    };
+    let rule_set = move |a: String, set: fn(&mut ClassRule, bool)| move |ev: leptos::ev::Event| {
+        let v = event_target_checked(&ev);
+        cfg.update(|o| {
+            if let Some(o) = o {
+                match o.class_rules.iter_mut().find(|r| r.age_group == a) {
+                    Some(r) => set(r, v),
+                    None => {
+                        let mut r = ClassRule { age_group: a.clone(), mixed: false, pool_only: false, jvp: false };
+                        set(&mut r, v);
+                        o.class_rules.push(r);
+                    }
+                }
+            }
         });
     };
     let methods = ["special", "pools", "double", "ko", "repechage"];
 
     view! {
         <section class="card">
-            <strong>"Klassen-Konfiguration"</strong>
+            <strong>"Konfiguration"</strong>
             {move || cfg.get().map(|c| view! {
                 <div class="toolbar" style="margin:.4rem 0;">
                     "Eventjahr "
                     <input type="number" style="width:6rem;" prop:value=c.event_year.to_string()
                         on:change=move |ev| { let v = event_target_value(&ev).parse().unwrap_or(0); cfg.update(|o| if let Some(o)=o { o.event_year=v; }); } />
-                    " · Jugend-Pool-Größe "
+                    " · Pool-Größe (nur-Pool-Klassen) "
                     <input type="number" style="width:4rem;" prop:value=c.youth_pool_size.to_string()
                         on:change=move |ev| { let v = event_target_value(&ev).parse().unwrap_or(4); cfg.update(|o| if let Some(o)=o { o.youth_pool_size=v; }); } />
-                    " · Jugend max. Gewichts-Spread (kg, 0=aus) "
+                    " · max. Gewichts-Spread im Pool (kg, 0=aus) "
                     <input type="number" step="0.5" style="width:5rem;" prop:value=c.youth_max_weight_spread.to_string()
                         on:change=move |ev| { let v = event_target_value(&ev).replace(',', ".").parse().unwrap_or(0.0); cfg.update(|o| if let Some(o)=o { o.youth_max_weight_spread=v; }); } />
-                    " · Jugend-Klassen (nur Pool) "
-                    <input style="width:8rem;" prop:value=c.youth_classes.join(",")
-                        on:change=move |ev| { let v = csv_to_vec(&event_target_value(&ev)); cfg.update(|o| if let Some(o)=o { o.youth_classes=v; }); } />
                 </div>
-                <h3>"Generierung U13+: ab N Kämpfern → Methode"</h3>
+                <h3>"1 · Altersklassen"</h3>
+                <table class="compact">
+                    {c.age_classes.iter().enumerate().map(|(i, a)| view! {
+                        <tr>
+                            <td><input style="width:6rem;" prop:value=a.clone()
+                                on:change=move |ev| {
+                                    let v = event_target_value(&ev).trim().to_string();
+                                    cfg.update(|o| if let Some(o)=o { if !v.is_empty() { o.age_classes[i] = v; } });
+                                } /></td>
+                            <td><button class="icon danger" title="Klasse entfernen"
+                                on:click=move |_| cfg.update(|o| if let Some(o)=o { o.age_classes.remove(i); })>"🗑"</button></td>
+                        </tr>
+                    }).collect_view()}
+                </table>
+                <div class="toolbar">
+                    <button on:click=move |_| cfg.update(|o| if let Some(o)=o { o.age_classes.push(String::new()); })>"+ Klasse"</button>
+                    <span class="muted">"U9 bis 18+, in Kampfreihenfolge"</span>
+                </div>
+                <h3>"2 · Regeln je Klasse"</h3>
+                <p class="muted">"Gemischt = alle Geschlechter in einer Gruppe (keine Gewichtsklassen). Nur Pool = immer im Pool-System. JVP = Additiv-Bewertung (Ippon 10 / Waza 5 / …)."</p>
+                <table class="compact">
+                    <thead><tr><th>"Klasse"</th><th>"Gemischt"</th><th>"Nur Pool"</th><th>"JVP"</th></tr></thead>
+                    <tbody>
+                        {c.age_classes.iter().filter(|a| !a.trim().is_empty()).map(|a| {
+                            let mixed_get = rule_get(a.clone(), |r| r.mixed);
+                            let mixed_set = rule_set(a.clone(), |r, v| r.mixed = v);
+                            let pool_get = rule_get(a.clone(), |r| r.pool_only);
+                            let pool_set = rule_set(a.clone(), |r, v| r.pool_only = v);
+                            let jvp_get = rule_get(a.clone(), |r| r.jvp);
+                            let jvp_set = rule_set(a.clone(), |r, v| r.jvp = v);
+                            view! {
+                                <tr>
+                                    <td>{a.clone()}</td>
+                                    <td><input type="checkbox" prop:checked=mixed_get on:change=mixed_set /></td>
+                                    <td><input type="checkbox" prop:checked=pool_get on:change=pool_set /></td>
+                                    <td><input type="checkbox" prop:checked=jvp_get on:change=jvp_set /></td>
+                                </tr>
+                            }
+                        }).collect_view()}
+                    </tbody>
+                </table>
+                <h3>"3 · Methoden: ab N Kämpfern → Wettbewerbsform (Klassen ohne „Nur Pool“)"</h3>
                 <table class="compact">
                     {c.adult_methods.iter().enumerate().map(|(i, m)| view! {
                         <tr>
@@ -921,7 +1193,7 @@ fn ConfigPanel(set_youth: WriteSignal<Vec<String>>) -> impl IntoView {
                         </tr>
                     }).collect_view()}
                 </table>
-                <h3>"Altersklassen je Jahrgang"<span class="muted">" (mehrere = Doppelstart-Überlappung)"</span></h3>
+                <h3>"3 · Altersklassen je Jahrgang"<span class="muted">" (mehrere = Doppelstart-Überlappung)"</span></h3>
                 <table class="compact">
                     <thead><tr><th>"Jahrgang"</th><th>"Klassen (Komma)"</th><th></th></tr></thead>
                     <tbody>
@@ -937,7 +1209,7 @@ fn ConfigPanel(set_youth: WriteSignal<Vec<String>>) -> impl IntoView {
                     </tbody>
                 </table>
                 <button on:click=move |_| cfg.update(|o| if let Some(o)=o { o.birth_years.push(BirthRow { year: 2020, classes: vec![] }); })>"+ Jahrgang"</button>
-                <h3>"Gewichtsklassen"<span class="muted">" (Geschlecht · Altersklasse · MaxGewicht · Label)"</span></h3>
+                <h3>"4 · Gewichtsklassen"<span class="muted">" (Geschlecht · Altersklasse · MaxGewicht · Label — nur für Klassen ohne „Gemischt“)"</span></h3>
                 <table class="compact">
                     <thead><tr><th>"G"</th><th>"Klasse"</th><th>"≤ kg"</th><th>"Label"</th><th></th></tr></thead>
                     <tbody>
@@ -961,6 +1233,7 @@ fn ConfigPanel(set_youth: WriteSignal<Vec<String>>) -> impl IntoView {
                 <button on:click=move |_| cfg.update(|o| if let Some(o)=o { o.weight_classes.push(WcRow { gender: "m".into(), age_group: "U15".into(), max_weight: 0.0, label: String::new() }); })>"+ Gewichtsklasse"</button>
                 <p/>
                 <button class="primary" on:click=move |_| save()>"Konfiguration speichern"</button>
+                <span class="hint">{move || save_msg.get()}</span>
             })}
         </section>
     }

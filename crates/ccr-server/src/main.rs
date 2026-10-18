@@ -74,7 +74,8 @@ async fn main() -> anyhow::Result<()> {
             "/api/clubs/:id",
             axum::routing::put(admin::update_club).delete(admin::delete_club),
         )
-        .route("/api/brackets", get(admin::list_brackets))
+        .route("/api/brackets", get(admin::list_brackets).delete(admin::delete_all_brackets))
+        .route("/api/brackets/:id", axum::routing::delete(admin::delete_bracket))
         .route("/api/brackets/:id/generate", post(admin::generate_bracket))
         .route("/api/brackets/:id/seeding", get(admin::get_seeding).put(admin::put_seeding))
         .route("/api/brackets/:id/places", axum::routing::put(admin::put_places))

@@ -343,6 +343,14 @@ pub async fn delete_for_bracket(pool: &PgPool, bracket_id: i32) -> Result<u64, s
     Ok(r.rows_affected())
 }
 
+/// True if ANY fight anywhere has a real played result (status='finished').
+/// The "results exist" guard for mode changes (config → list reset).
+pub async fn any_finished(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM fights WHERE status='finished')")
+        .fetch_one(pool)
+        .await
+}
+
 /// Create one pool-phase fight (generation). round/pos NULL; pool_index set.
 pub async fn create_pool_fight(
     pool: &PgPool,

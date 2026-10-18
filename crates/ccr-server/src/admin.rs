@@ -106,6 +106,13 @@ pub async fn list_brackets(State(st): State<AppState>) -> Result<Json<Value>, Ap
             .map(|p| format!("{} {}", p.first_name, p.last_name).trim().to_string())
             .unwrap_or_default()
     };
+    // Club of each placement — feeds the "Auswertungen" view (placements per club).
+    let club = |id: Option<i32>| {
+        id.and_then(|i| people.get(&i))
+            .and_then(|p| p.club.clone())
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or_default()
+    };
 
     let out: Vec<Value> = summaries
         .iter()
@@ -125,6 +132,10 @@ pub async fn list_brackets(State(st): State<AppState>) -> Result<Json<Value>, Ap
                 "second": name(s.second_place),
                 "third1": name(s.third_place_1),
                 "third2": name(s.third_place_2),
+                "firstClub": club(s.first_place),
+                "secondClub": club(s.second_place),
+                "third1Club": club(s.third_place_1),
+                "third2Club": club(s.third_place_2),
             })
         })
         .collect();
@@ -762,9 +773,9 @@ pub async fn create_all_brackets(State(st): State<AppState>) -> Result<Json<Valu
                 continue;
             }
         }
-        // Youth source group (e.g. "U11", mixed gender) → split by weight into
-        // pool sub-groups + a bracket each (edv split_u9_u11_into_pools).
-        let is_youth_source = age.as_deref().map_or(false, |a| cfg.youth_classes.iter().any(|y| y == a))
+        // Pool-only source group (e.g. "U11", mixed gender) → split by weight
+        // into pool sub-groups + a bracket each (edv split_u9_u11_into_pools).
+        let is_youth_source = age.as_deref().map_or(false, |a| cfg.is_pool_only(Some(a)))
             && !name.contains("Pool");
         if is_youth_source {
             let age = age.unwrap();
@@ -870,10 +881,9 @@ pub async fn assign_groups(State(st): State<AppState>) -> Result<Json<Value>, Ap
                 locked_skipped += 1;
                 continue;
             }
-            let is_youth = cfg.youth_classes.iter().any(|y| y == age);
-            // Youth (U9/U11): one mixed-gender, weight-class-free group per age
+            // Mixed classes: one shared, weight-class-free group per age
             // (split into weight pools at list creation). Others: gender|age|class.
-            let (name, ggender, gwc) = if is_youth {
+            let (name, ggender, gwc) = if cfg.is_mixed(Some(age)) {
                 (age.clone(), None, None)
             } else {
                 let wc = weight.and_then(|w| cfg.weight_class(g, age, w));
@@ -1084,6 +1094,8 @@ fn seed_config(bc: Option<&BracketConfig>) -> AppConfig {
     AppConfig {
         event_year,
         age_classes,
+        // filled by `migrate()` from youth_classes (mixed + pool + JVP)
+        class_rules: vec![],
         youth_classes: vec!["U9".into(), "U11".into()],
         youth_pool_size: 4,
         youth_max_weight_spread: 0.0, // off by default; set in the UI to weight-cut
@@ -1108,7 +1120,8 @@ pub async fn get_config(st: &AppState) -> Result<AppConfig, AppError> {
     let path = std::env::var("CCR_BRACKET_CONFIG")
         .unwrap_or_else(|_| "../edv/config/bracket_config.xlsx".into());
     let bc = BracketConfig::load(&path).ok();
-    let cfg = seed_config(bc.as_ref());
+    // Normalize a fresh seed the same way `load` normalizes legacy rows.
+    let cfg = seed_config(bc.as_ref()).migrate();
     app_config::save(&st.pool, &cfg).await?;
     Ok(cfg)
 }
@@ -1118,13 +1131,91 @@ pub async fn get_config_handler(State(st): State<AppState>) -> Result<Json<Value
     Ok(Json(serde_json::to_value(get_config(&st).await?).unwrap()))
 }
 
-/// PUT /api/config — replace the config (full document).
+/// The part of the config that changes how lists are built ("der Modus").
+/// If this (and only this) changes, already generated lists are stale.
+fn mode_fingerprint(cfg: &AppConfig) -> Value {
+    json!({
+        "ageClasses": cfg.age_classes,
+        "classRules": cfg.class_rules,
+        "methods": cfg.adult_methods,
+        "birthYears": cfg.birth_years,
+        "weightClasses": cfg.weight_classes,
+        "poolSize": cfg.youth_pool_size,
+        "maxWeightSpread": cfg.youth_max_weight_spread,
+    })
+}
+
+/// PUT /api/config — replace the config (full document). If the list-building
+/// mode changed, the already generated lists are stale and get deleted —
+/// UNLESS results exist (finished fights or completed lists), which is a 409:
+/// the operator must delete those lists explicitly first.
 pub async fn put_config(
     State(st): State<AppState>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let cfg: AppConfig = serde_json::from_value(body)
         .map_err(|e| AppError::status(StatusCode::BAD_REQUEST, format!("invalid config: {e}")))?;
+    // A first-ever config (no row yet) also establishes the mode — there are
+    // no lists to reset, so the code path is safe.
+    let mode_changed = match app_config::load(&st.pool).await? {
+        Some(old) => mode_fingerprint(&old.migrate()) != mode_fingerprint(&cfg),
+        None => true,
+    };
+    let mut lists_deleted = 0u64;
+    if mode_changed {
+        if fights::any_finished(&st.pool).await? || brackets::any_completed(&st.pool).await? {
+            return Err(AppError::status(
+                StatusCode::CONFLICT,
+                "Modus wurde geändert, aber es existieren abgeschlossene Listen mit Ergebnissen. \
+                 Bitte zuerst über „Listen löschen“ entfernen.".into(),
+            ));
+        }
+        lists_deleted = brackets::delete_all(&st.pool).await?;
+    }
     app_config::save(&st.pool, &cfg).await?;
-    Ok(Json(json!({ "status": "ok" })))
+    Ok(Json(json!({ "status": "ok", "listsDeleted": lists_deleted })))
+}
+
+/// DELETE /api/brackets/:id — remove one list (bracket + all its fights).
+/// Explicit operator action: works even with results (the UI confirms). A
+/// locked age class still refuses (423).
+pub async fn delete_bracket(
+    State(st): State<AppState>,
+    Path(id): Path<i32>,
+) -> Result<Json<Value>, AppError> {
+    if brackets::find(&st.pool, id).await?.is_none() {
+        return Err(AppError::status(StatusCode::NOT_FOUND, format!("bracket {id} not found")));
+    }
+    let locked = locks::locked_keys(&st.pool).await?;
+    if !locked.is_empty() {
+        if let Some((g, Some(age))) = brackets::group_class(&st.pool, id).await? {
+            if locks::is_class_locked(&locked, g.as_deref(), &age) {
+                return Err(AppError::status(
+                    StatusCode::LOCKED,
+                    format!("bracket {id} age class '{age}' is locked"),
+                ));
+            }
+        }
+    }
+    brackets::delete(&st.pool, id).await?;
+    Ok(Json(json!({ "deleted": id })))
+}
+
+/// DELETE /api/brackets — remove ALL lists ("Alle Listen löschen"). Locked
+/// classes are skipped and reported (the operator unlocks them deliberately).
+pub async fn delete_all_brackets(State(st): State<AppState>) -> Result<Json<Value>, AppError> {
+    let locked = locks::locked_keys(&st.pool).await?;
+    let mut deleted = 0u64;
+    let mut locked_skipped = 0u32;
+    for s in brackets::all_summaries(&st.pool).await? {
+        if let Some(age) = s.age_group.as_deref() {
+            if locks::is_class_locked(&locked, s.gender.as_deref(), age) {
+                locked_skipped += 1;
+                continue;
+            }
+        }
+        brackets::delete(&st.pool, s.id).await?;
+        deleted += 1;
+    }
+    Ok(Json(json!({ "deleted": deleted, "lockedSkipped": locked_skipped })))
 }

@@ -179,6 +179,39 @@ pub async fn find(pool: &PgPool, id: i32) -> Result<Option<Bracket>, sqlx::Error
         .await
 }
 
+/// Delete one bracket together with all its fights. Returns rows removed.
+/// (Fights first: fights.bracket_id is an FK onto brackets.)
+pub async fn delete(pool: &PgPool, id: i32) -> Result<u64, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM fights WHERE bracket_id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let r = sqlx::query("DELETE FROM brackets WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(r.rows_affected())
+}
+
+/// Delete ALL brackets + fights ("Alle Listen löschen"). Returns brackets removed.
+pub async fn delete_all(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM fights").execute(&mut *tx).await?;
+    let r = sqlx::query("DELETE FROM brackets").execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(r.rows_affected())
+}
+
+/// True if any bracket is completed (manual placements entered) — the
+/// "results exist" guard for mode changes.
+pub async fn any_completed(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM brackets WHERE status='completed')")
+        .fetch_one(pool)
+        .await
+}
+
 /// A bracket + its group attributes + placements (admin results overview).
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct BracketSummary {

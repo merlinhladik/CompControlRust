@@ -1,24 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! CompControlRust frontend (Leptos CSR / WASM).
 //!
-//! App shell: hash-router (#/kaempfer, #/listen, #/einstellungen, #/matte,
-//! #/baum — deep-linkable, so e.g. the Mattenliste can run in its own browser
-//! window), topbar navigation, the live WebSocket and the global fighter-edit
-//! overlay (Cmd/Strg+S saves, Esc closes). Views live in `live` + `admin`.
+//! App shell: hash-router (#/kaempfer, #/listen, #/wettkampflisten,
+//! #/auswertungen, #/einstellungen — deep-linkable), topbar navigation and the
+//! global fighter-edit overlay (Cmd/Strg+S saves, Esc closes). Views live in
+//! `admin`. The live mat/tree views are gone — score entry happens on the mats.
 
 mod admin;
 mod api;
-mod live;
 
-use futures::{SinkExt, StreamExt};
-use gloo_net::websocket::{futures::WebSocket, Message};
 use leptos::prelude::*;
 use serde_json::json;
 
-use api::{
-    fetch_matches, fetch_participants, fetch_youth_classes, ws_url, AdminParticipant,
-    BracketResult, ClubInfo, EditState, Match,
-};
+use api::{fetch_participants, AdminParticipant, BracketResult, ClubInfo, EditState};
 
 fn main() {
     leptos::mount::mount_to_body(App);
@@ -27,11 +21,11 @@ fn main() {
 #[derive(Clone, Copy, PartialEq)]
 enum Route {
     Kaempfer,
+    Vereine,
     Listen,
     Wettkampflisten,
+    Auswertungen,
     Einstellungen,
-    Matte,
-    Baum,
     Klasse(i64),
 }
 
@@ -43,10 +37,10 @@ impl Route {
                 .parse::<i64>()
                 .map(Route::Klasse)
                 .unwrap_or(Route::Listen),
-            "matte" => Route::Matte,
-            "baum" => Route::Baum,
+            "vereine" => Route::Vereine,
             "listen" => Route::Listen,
             "wettkampflisten" => Route::Wettkampflisten,
+            "auswertungen" => Route::Auswertungen,
             "einstellungen" => Route::Einstellungen,
             _ => Route::Kaempfer,
         }
@@ -61,18 +55,12 @@ fn current_hash() -> String {
 
 #[component]
 fn App() -> impl IntoView {
-    let (matches, set_matches) = signal(Vec::<Match>::new());
-    let (connected, set_connected) = signal(false);
     let (route, set_route) = signal(Route::from_hash(&current_hash()));
-    let (sel_bracket, set_sel_bracket) = signal(None::<i64>);
     let (parts, set_parts) = signal(Vec::<AdminParticipant>::new());
     let (results, set_results) = signal(Vec::<BracketResult>::new());
     let search = RwSignal::new(String::new());
     let edit = RwSignal::new(None::<EditState>);
     let (clubs_list, set_clubs) = signal(Vec::<ClubInfo>::new());
-    // Youth rule (which classes use JVP-additive scoring) — config-driven, so the
-    // live view matches the server's `AppConfig::is_youth` instead of hardcoding.
-    let (youth, set_youth) = signal(Vec::<String>::new());
 
     // Hash-router: the nav renders plain <a href="#/…">, the browser handles
     // history, this listener keeps the route signal in sync.
@@ -118,56 +106,6 @@ fn App() -> impl IntoView {
     });
     std::mem::forget(key_handle);
 
-    let (tx, mut rx) = futures::channel::mpsc::unbounded::<String>();
-    let tx = StoredValue::new(tx);
-
-    leptos::task::spawn_local(async move { set_matches.set(fetch_matches().await); });
-    leptos::task::spawn_local(async move { set_youth.set(fetch_youth_classes().await); });
-
-    leptos::task::spawn_local(async move {
-        let Ok(ws) = WebSocket::open(&ws_url()) else { return };
-        let (mut write, mut read) = ws.split();
-        set_connected.set(true);
-        leptos::task::spawn_local(async move {
-            while let Some(msg) = rx.next().await {
-                if write.send(Message::Text(msg)).await.is_err() { break; }
-            }
-        });
-        while let Some(msg) = read.next().await {
-            let Ok(Message::Text(txt)) = msg else { continue };
-            let Ok(val) = serde_json::from_str::<serde_json::Value>(&txt) else { continue };
-            match val.get("type").and_then(|t| t.as_str()) {
-                Some("SCORE_SYNC") => {
-                    if let Some(u) = val.get("match").cloned().and_then(|m| serde_json::from_value::<Match>(m).ok()) {
-                        set_matches.update(|list| match list.iter_mut().find(|x| x.match_id == u.match_id) {
-                            Some(slot) => *slot = u,
-                            None => list.push(u),
-                        });
-                    }
-                }
-                Some(_) => set_matches.set(fetch_matches().await),
-                None => {}
-            }
-        }
-        set_connected.set(false);
-    });
-
-    let send = move |msg: serde_json::Value| {
-        tx.with_value(|t| { let _ = t.unbounded_send(msg.to_string()); });
-    };
-
-    // Distinct brackets for the tree-view selector: (bracket_id, label).
-    let brackets = move || {
-        let mut seen: Vec<(i64, String)> = Vec::new();
-        for m in matches.get() {
-            if !seen.iter().any(|(b, _)| *b == m.bracket_id) {
-                seen.push((m.bracket_id, format!("#{} {}", m.bracket_id, m.category())));
-            }
-        }
-        seen.sort_by_key(|(b, _)| *b);
-        seen
-    };
-
     // Gate the modal on Some/None only (memo), so keystrokes inside the form
     // update EditState without re-mounting the inputs (focus survives typing).
     let editing = Memo::new(move |_| edit.with(|e| e.is_some()));
@@ -180,26 +118,22 @@ fn App() -> impl IntoView {
         <header class="topbar">
             <span class="brand">"Competition Control"</span>
             <nav class="tabs">
-                {tab(Route::Matte, "#/matte", "Mattenliste")}
-                {tab(Route::Baum, "#/baum", "Baum")}
                 {tab(Route::Kaempfer, "#/kaempfer", "Kämpfer")}
+                {tab(Route::Vereine, "#/vereine", "Vereine")}
                 {tab(Route::Listen, "#/listen", "Listen & Ergebnisse")}
                 {tab(Route::Wettkampflisten, "#/wettkampflisten", "Wettkampflisten")}
+                {tab(Route::Auswertungen, "#/auswertungen", "Auswertungen")}
                 {tab(Route::Einstellungen, "#/einstellungen", "Einstellungen")}
             </nav>
-            <span class="conn">
-                <span class="dot" class:live=move || connected.get()></span>
-                {move || if connected.get() { "live" } else { "verbinde…" }}
-            </span>
         </header>
         <main>
             {move || match route.get() {
-                Route::Matte => live::list_view(matches, youth, send).into_any(),
-                Route::Baum => live::tree_view(matches, youth, sel_bracket, set_sel_bracket, brackets, send).into_any(),
                 Route::Kaempfer => admin::participants_view(parts, set_parts, search, edit, set_clubs).into_any(),
+                Route::Vereine => admin::clubs_view(clubs_list, set_clubs).into_any(),
                 Route::Listen => admin::brackets_view(results, set_results).into_any(),
                 Route::Wettkampflisten => admin::listen_view(results, set_results).into_any(),
-                Route::Einstellungen => admin::settings_view(clubs_list, set_clubs, set_youth).into_any(),
+                Route::Auswertungen => admin::auswertungen_view(results, set_results).into_any(),
+                Route::Einstellungen => admin::settings_view().into_any(),
                 Route::Klasse(id) => admin::klasse_view(id).into_any(),
             }}
         </main>

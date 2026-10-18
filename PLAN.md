@@ -122,7 +122,7 @@ Folgt direkt aus „100 % Rust, kein Sidecar". Bevor irgendetwas anderes startet
 - ⏳ Auto-Order (`fightOrder.js` chunked-round-robin) → `ccr-domain`.
 - **Exit (offen):** ganzes Turnier live über CCR inkl. Topologie ⇒ braucht Phase 4.
 
-### Phase 3 — Live-Frontend  — 🔧 Slice 1 läuft (2026-06-18)
+### Phase 3 — Live-Frontend  — ✅ fertig, UI 2026-10-18 zugunsten des Admin-Flows entfernt (Slice 21)
 - **Entscheidung:** Leptos **CSR** (nicht SSR/hydrate) — die WASM-App lädt einmal,
   lebt dann auf dem WS; ccr-server liefert nur Bundle + API/WS. Build via **Trunk**
   (`wasm32-unknown-unknown`); Host-`cargo build`/`test` überspringt das WASM-Crate
@@ -251,7 +251,7 @@ Reihenfolge nach steigendem Risiko (Rest):
   Das blockiert NICHT den Rest der Migration.
 - **Exit:** CCR generiert Brackets + Excel; edv-Backend-Services überflüssig.
 
-### Phase 5 — Admin-Frontend + edv-Ablösung  — 🔧 Slice 1 (2026-06-18)
+### Phase 5 — Admin-Frontend + edv-Ablösung  — 🔧 Slice 25 (2026-10-18)
 - ✅ **Slice 1: Admin-Read-Views.** Backend `ccr-server::admin` (read-only):
   `GET /api/participants` (`participants::all`) + `GET /api/brackets`
   (`brackets::all_summaries`, Platzierungs-gp-ids → Namen aufgelöst). Frontend
@@ -413,6 +413,56 @@ Reihenfolge nach steigendem Risiko (Rest):
   Platzhalter-Reste; Import-ohne-Gewicht → `weight=NULL` → Karte mit U13 (aus
   Jahrgang) → wieder gelöscht. ⚠ QR-Bild selbst noch nicht gerendert (`id` liegt
   im CSV; Affinity-seitig oder eine Crate server-seitig = offener Einzeiler).
+- ✅ **Slice 21: Menü-Struktur (2026-10-18, todo.md).** Tabs = Kämpfer · Vereine ·
+  Listen & Ergebnisse · Wettkampflisten · Auswertungen · Einstellungen. **Weg:**
+  Mattenliste + Baum-Tab (Phase 3/5-UI) und der Live-Indikator oben rechts —
+  ohne Matte-Verbindung nutzlos (Merlin-Entscheidung); `ccr-frontend` nutzt keine
+  WS-Client mehr (Server-Pfad `/ws` + `/api/matches` bleibt, Ipponboard-Vertrag
+  unverändert). `Vereine` = eigener Reiter (eigene CRUD-View, wie Kämpfer).
+  `live.rs` (Frontend) gelöscht.
+- ✅ **Slice 22: Wiegekarten 6/Seite A4-Porträt, ohne Unterschrift.**
+  `print_html`: 3×2-Raster (`.cards` grid, `A4 portrait`, `break-inside: avoid`,
+  ~130 mm Karte) — Unterschrift-Zeile entfernt, Gewicht-Blankozeile bleibt.
+  `pdf::wiegekarten_pdf`: neues Karten-Layout (printpdf `Rect` Stroke + Text;
+  6 Karten/Seite, 3 Spalten × 2 Zeilen, id/name/verein/meta + Gewicht-Linie),
+  `table_pdf`/`results_pdf` (Tabelle, Querformat) unverändert. **Tests**: HTML
+  ohne „Unterschrift" + 3-Spalten-Grid; PDF gültig, Seiten = ⌈n/6⌉ (1 TN→1,
+  7→2, 12→2 Seiten). **E2E** (edv-DB, 356 TN): PDF 60 Seiten; HTML 356 Karten,
+  0× „Unterschrift".
+- ✅ **Slice 23: Einstellungen — geordnete 4-Sektionen + Klassen-Regeln.**
+  `ccr-db::app_config`: neue `class_rules` (je `ClassRule { age_group, mixed,
+  pool_only, jvp }`) — `mixed` ersetzt die alte `youth_classes`-Semantik
+  (getrennt/gemischt), `pool_only` = „Nur Pool", `jvp` = Additiv-Bewertung
+  (eigene 3. pro Klasse; `is_youth` liest jetzt `jvp`). `migrate()` (by-value,
+  idempotent) legt Regeln aus Legacy-`youth_classes` (mixed+pool+jvp=true) an;
+  `load()` + `get_config`-Seed wandern damit automatisch. `recommend`/
+  `assign-groups` (mixed) / `create-all` (pool_only) nutzen die Regeln.
+  Frontend `ConfigPanel` neu: Sektion 1 Altersklassen (edelierbar), 2 Regeln je
+  Klasse (Checkbox-Tabelle gemischt/nur-Pool/JVP), 3 Methoden + Jahrgänge,
+  4 Gewichtsklassen; **Speichern-Rückmeldung** (Erfolg/Fehler +
+  „n Listen gelöscht"). Orphan-Regeln (Klasse entfernt) werden beim PUT
+  weggeschnitten.
+- ✅ **Slice 24: Listen löschen + Moduswechsel-Schutz.** `ccr-db::brackets`:
+  `delete` (Kämpfe zuerst, FK fights.bracket_id), `delete_all`, `any_completed`;
+  `fights::any_finished`. Server: `DELETE /api/brackets/:id` (423 bei gesperrter
+  Klasse, 404 wenn unbekannt) + `DELETE /api/brackets` (alle; gesperrte
+  Klassen übersprungen, Antwort `{deleted, lockedSkipped}`). `PUT /api/config`:
+  Modus-Fingerprint (ageClasses, classRules, methods, birthYears,
+  weightClasses, poolSize, maxWeightSpread) → bei Änderung: 409 solange
+  `any_finished || any_completed` („Bitte zuerst über Listen löschen entfernen"),
+  sonst Auto-`delete_all` + `listsDeleted` im Response. Frontend: 🗑 je
+  Listen-Zeile + „Alle Listen löschen" (je mit confirm). **E2E** (Scratch-DB):
+  423→entlockt→deleted; delete-all mit Lock → `{deleted:0, lockedSkipped:4}`;
+  Moduswechsel mit completed-Bracket → 409 (Daten intakt); ohne → `listsDeleted
+  =4`, DB leer; 2. PUT ohne Änderung → 0. **E2E** (edv-DB, read-only-Geduld):
+  409 bei 27 finished Fights, 43 Brackets intakt.
+- ✅ **Slice 25: Auswertungen-Tab (Platzierungen pro Verein × Klasse).**
+  `list_brackets` emittiert zusätzlich `firstClub/secondClub/third1Club/
+  third2Club` (Platz→Teilnehmer→Verein, leere Plätze = ""). Frontend
+  `auswertungen_view`: Tabelle pro Altersklasse × Gewichtsklasse/Jugend-Pool
+  mit 1./2./3./3. + Verein (nur gespeicherte Plätze; Platz 4+ = eigenes
+  späteres Thema, Merlin-Entscheidung). **E2E** (edv-DB): 3 Brackets mit
+  Plätzen → Namen + Vereine korrekt (z. B. „U9 | Pool 4": Meyer/TSV Köln).
 - ✅ **Phase 4 + 5 funktional KOMPLETT** (außer pixelgenaue DJB-Druck-Vorlagen).
 - edv-Tkinter-Screens (~15k LOC) → Leptos-Web-Admin: größter UI-Brocken.
 - **Exit:** edv + JF abgeschaltet; CCR ist die Suite-Hälfte.
