@@ -572,3 +572,18 @@ Host-Port 5433, `DATABASE_URL`).
 **Nicht umgesetzt (eingeparkt, Merlin):** Wiegen-Batch-Modus (Abtipp-Ansicht
 mit „Gewicht leer“-Filter + Bulk-Endpunkt `POST /api/participants/weights`) —
 offen aus dem 2026-10-24-Abtipp-Gespräch.
+
+## 9. Stand 2026-10-24 — Vereins-Wertung (Punkte 5/3/1)
+
+**Vereins-Wertung im „Auswertungen“-Tab** (Merlin-Anforderung: Siege mit
+Punkten bewerten und pro Verein aufsummiert zeigen):
+- Gold = 5, Silber = 3, Bronze = 1 (jeder der beiden Dritten); aufsummiert
+  pro Verein, Tabelle `# | Verein | 1. | 2. | 3. | Punkte`, sortiert nach
+  Punkten absteigend, dann Gold-Anzahl, dann Name (deterministische
+  Gleichstands-Ordnung).
+- Rein Frontend (datenseitig nichts neu: `BracketResult` trägt seit Slice 25
+  die Vereins-Zugehörigkeit je Platz; nur abgeschlossene Listen zählen;
+  Einträge ohne Namen oder ohne Verein fließen nicht ein).
+- Die bestehende Altersklassen-Chip-Filterung wirkt auch auf die Wertung.
+- E2E: gegen `ccr_db` (356 TN, 3 abgeschlossene Listen) abgeglichen —
+  MTV Karlsruhe 6 / TSV Köln 6 / JC Leipzig 5 / PSV Frankfurt 3.

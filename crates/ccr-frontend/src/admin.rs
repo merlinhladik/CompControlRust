@@ -604,6 +604,45 @@ struct PlatzRow {
     platz_label: String,
 }
 
+/// Club point tally for the Vereins-Wertung: podium counts + total
+/// (gold 5 / silver 3 / bronze 1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ClubPoints {
+    club: String,
+    gold: i32,
+    silver: i32,
+    bronze: i32,
+    points: i32,
+}
+
+/// Aggregate (name, club, platz) placements into the club ranking:
+/// 1st = 5, 2nd = 3, 3rd = 1 (both thirds). Entries without a placed fighter
+/// (empty name) or without a club are skipped. Sorted by points desc, then
+/// gold count desc, then club name — deterministic for equal points.
+fn club_points(entries: &[(String, String, i32)]) -> Vec<ClubPoints> {
+    let mut map: std::collections::BTreeMap<String, (i32, i32, i32)> =
+        std::collections::BTreeMap::new();
+    for (name, club, platz) in entries {
+        if name.is_empty() || club.is_empty() {
+            continue;
+        }
+        let e = map.entry(club.clone()).or_insert((0, 0, 0));
+        match platz {
+            1 => e.0 += 1,
+            2 => e.1 += 1,
+            _ => e.2 += 1,
+        }
+    }
+    let mut out: Vec<ClubPoints> = map
+        .into_iter()
+        .map(|(club, (g, s, b))| ClubPoints { club, gold: g, silver: s, bronze: b, points: 5 * g + 3 * s + b })
+        .collect();
+    out.sort_by(|a, b| {
+        b.points.cmp(&a.points).then(b.gold.cmp(&a.gold)).then(a.club.cmp(&b.club))
+    });
+    out
+}
+
 /// All awarded placements (1./2./3./3.) of the completed lists, grouped by
 /// club → age class → place. The age-class chips filter the view.
 pub fn auswertungen_view(
@@ -657,6 +696,25 @@ pub fn auswertungen_view(
     };
     let ages = move || chips(&results.get(), age_of, age_key);
     let count = move || all().len();
+    // Club points (gold 5 / silver 3 / bronze 1) over the completed lists,
+    // restricted to the selected age classes like the table below.
+    let pts = move || {
+        let sel = sel_age.get();
+        let mut entries: Vec<(String, String, i32)> = Vec::new();
+        for b in results.get() {
+            if b.status.as_deref() != Some("completed") {
+                continue;
+            }
+            if !sel.is_empty() && !sel.contains(&age_of(&b)) {
+                continue;
+            }
+            entries.push((b.first.clone(), b.first_club.clone(), 1));
+            entries.push((b.second.clone(), b.second_club.clone(), 2));
+            entries.push((b.third1.clone(), b.third1_club.clone(), 3));
+            entries.push((b.third2.clone(), b.third2_club.clone(), 3));
+        }
+        club_points(&entries)
+    };
 
     view! {
         <div class="card">
@@ -665,6 +723,30 @@ pub fn auswertungen_view(
                 <button on:click=move |_| sel_age.set(vec![])>"Filter zurücksetzen"</button>
                 <span class="muted">{move || format!("{} Platzierungen (1. – 3.)", count())}</span>
             </div>
+        </div>
+
+        <div class="card scroll-x">
+            <strong>"Vereins-Wertung (Gold 5 · Silber 3 · Bronze 1)"</strong>
+            <table>
+                <thead><tr>
+                    <th>"#"</th><th>"Verein"</th><th>"1."</th><th>"2."</th>
+                    <th>"3."</th><th>"Punkte"</th>
+                </tr></thead>
+                <tbody>
+                    {move || pts().into_iter().enumerate().map(|(i, c)| {
+                        view! {
+                            <tr>
+                                <td>{i + 1}</td>
+                                <td>{c.club}</td>
+                                <td>{c.gold}</td>
+                                <td>{c.silver}</td>
+                                <td>{c.bronze}</td>
+                                <td><strong>{c.points}</strong></td>
+                            </tr>
+                        }
+                    }).collect_view()}
+                </tbody>
+            </table>
         </div>
 
         <div class="card scroll-x">
