@@ -792,6 +792,7 @@ pub fn brackets_view(
             <div class="links">
                 <a href="/api/export/results.xlsx" download>"Ergebnisliste (.xlsx)"</a>
                 <a href="/api/export/results.pdf" download>"Ergebnisliste (.pdf)"</a>
+                <a href="/api/export/ergebnisliste.csv" download>"Ergebnisliste (.csv → Affinity)"</a>
                 <a href="/api/export/urkunden.xlsx" download>"Urkunden (.xlsx)"</a>
                 <a href="/api/export/urkunden.csv" download>"Urkunden (.csv → Affinity)"</a>
                 <a href="/print/listen" target="_blank">"🖨 Alle Wettkampflisten drucken"</a>

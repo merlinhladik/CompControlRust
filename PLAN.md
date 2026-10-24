@@ -519,9 +519,9 @@ VOR dem Cutover).
 **B. Funktionale Folgenden (bewusst aufgeschoben, Merlin-Entscheidungen)**
 - **Platzierungen 4+** — „Auswertungen" zeigt nur 1./2./3./3. pro Verein × Klasse
   (Slice 25). Platz 4+ = eigenes späteres Thema.
-- **QR-Bild auf den Wiegekarten** (Slice 20 ⚠) — `id` liegt als Merge-/QR-Wert
-  im CSV, gerendert wird noch nichts. Entwurf: Affinity-Vorlage (Data Merge)
-  ODER server-seitige QR-Crate (neuer Export `/api/export/wiegekarten-qr.pdf`?).
+- **QR-Bild auf den Wiegekarten — ERLEDIGT 2026-10-24: KEIN QR.** Karten werden
+  an der Waage von Hand gefüllt, dann am Haupt-PC (Haupt_EDV) abgetippt — ein
+  Scan-Schritt existiert nicht (siehe §8).
 - **Live-UI-Rückbau-Entscheid** — Slice 21 hat Mattenliste/Baum/Live-Indikator aus
   dem Frontend genommen (WS-Client weg). Server-Endpunkte `/ws` +
   `/api/matches` bleiben (Ipponboard-Vertrag). Sobald der Turnierbetrieb mit
@@ -539,3 +539,36 @@ VOR dem Cutover).
   (CLAUDE.md: „Merlin to confirm") — fließt in `ccr-domain::repechage` ein.
 - **Pixelgenaue DJB-Druckvorlagen** (Phase-4/5-Rest) — durch das Affinity-CSV-
   Procedere (Slice 20) faktisch ersetzt; nur noch Nice-to-have.
+
+## 8. Stand 2026-10-24 — Affinity-Druckfunktion (Listen-Scope)
+
+**Leitentscheidung (Merlin):** CCR ist das **einzige System** — edv/JF sind aus
+der Planung rausgenommen. Vorerst nutzt CCR **nur die Listen** (Import →
+Zuordnung → Generierung → Wettkampflisten → Exporte → Abtippen); Live-Matten-
+Scoring bleibt aus dem Betriebsscope. **SQLite wurde geprüft und verworfen:**
+bei ~500 TN ist die DB-Last kein Kriterium, und der Postgres-Wechsel würde
+(unnest/ON-CONSTRAINT/NUMERIC-Portierung, Import-Tool, Re-Verifikation)
+einen zweitägigen Umbau kosten, den der Nutzen nicht rechtfertigt.
+**DB bleibt Postgres, bestehende Bereitstellung** (Docker `ccr_db` auf
+Host-Port 5433, `DATABASE_URL`).
+
+**Druckfunktion Affinity Publisher (Data Merge) — umgesetzt:**
+- `GET /api/export/ergebnisliste.csv` — drittes Merge-Druckstück neben
+  Wiegekarten- und Urkunden-CSV. Header = Merge-Feldnamen:
+  `kategorie, typ, gold, goldVerein, silber, silberVerein, bronze1,
+  bronze1Verein, bronze2, bronze2Verein`; eine Zeile pro abgeschlossener
+  Liste (Vereine aus der People-Map, `ResultRow` um `*_club` erweitert,
+  xlsx/pdf unverändert). Unit-Test `ergebnisliste_csv_is_merge_ready`
+  (Quoting + leere Felder bei offenen Listen). UI-Link im Export-Kasten.
+- `docs/print-affinity.md` — Vorlagenspezifikationen (Wiegekarten 3×2 A4,
+  Urkunden 1/Seite, Ergebnisliste-Tabelle) + Data-Merge-How-To (einmalig
+  einrichten, je Turnier nur CSV tauschen) + Export-Zeitpunkte.
+- **Wettkampflisten bewusst NICHT in Affinity:** Grid/Baum-Struktur variiert
+  je Klasse → bleibt CCR-HTML-Druck (`/print/listen`).
+- E2E gegen `ccr_db` (356 TN, 43 Listen, 624 Kämpfe): Header + 3 abgeschlossene
+  Listen (gold/silber/bronze inkl. Vereinen) exakt gegen DB abgeglichen;
+  urkunden/wiegekarten-CSVs als Regression grün. Frontend (Trunk) neu gebaut.
+
+**Nicht umgesetzt (eingeparkt, Merlin):** Wiegen-Batch-Modus (Abtipp-Ansicht
+mit „Gewicht leer“-Filter + Bulk-Endpunkt `POST /api/participants/weights`) —
+offen aus dem 2026-10-24-Abtipp-Gespräch.

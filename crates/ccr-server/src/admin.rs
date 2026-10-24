@@ -938,6 +938,11 @@ async fn result_rows(st: &AppState) -> Result<Vec<ResultRow>, AppError> {
             .map(|p: &ccr_db::participants::ResolvedParticipant| format!("{} {}", p.first_name, p.last_name).trim().to_string())
             .unwrap_or_default()
     };
+    let club = |id: Option<i32>| {
+        id.and_then(|i| people.get(&i))
+            .and_then(|p: &ccr_db::participants::ResolvedParticipant| p.club.clone())
+            .unwrap_or_default()
+    };
     Ok(summaries
         .iter()
         .map(|s| {
@@ -946,8 +951,10 @@ async fn result_rows(st: &AppState) -> Result<Vec<ResultRow>, AppError> {
             ResultRow {
                 kategorie: if cat.trim().is_empty() { s.group_name.clone() } else { cat },
                 typ: s.bracket_type.clone().unwrap_or_default(),
-                first: name(s.first_place), second: name(s.second_place),
-                third1: name(s.third_place_1), third2: name(s.third_place_2),
+                first: name(s.first_place), first_club: club(s.first_place),
+                second: name(s.second_place), second_club: club(s.second_place),
+                third1: name(s.third_place_1), third1_club: club(s.third_place_1),
+                third2: name(s.third_place_2), third2_club: club(s.third_place_2),
             }
         })
         .collect())
@@ -963,6 +970,19 @@ pub async fn export_results(State(st): State<AppState>) -> Result<Response, AppE
 /// GET /api/export/results.pdf — printed results list.
 pub async fn export_results_pdf(State(st): State<AppState>) -> Result<Response, AppError> {
     Ok(pdf_response("ergebnisse.pdf", ccr_excel::pdf::results_pdf(&result_rows(&st).await?)))
+}
+
+/// GET /api/export/ergebnisliste.csv — merge-ready CSV for Affinity /
+/// LibreOffice data merge (one row per completed category, medallist + club
+/// pairs; header = the merge field names).
+pub async fn export_ergebnisliste_csv(State(st): State<AppState>) -> Result<Response, AppError> {
+    let csv = export::ergebnisliste_csv(&result_rows(&st).await?)
+        .map_err(|e| AppError::status(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"ergebnisliste.csv\"")
+        .body(Body::from(csv))
+        .unwrap())
 }
 
 /// One row per awarded placement of every completed bracket (Urkunden source).

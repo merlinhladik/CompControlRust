@@ -86,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/locks/:scope_key", axum::routing::delete(admin::remove_lock))
         .route("/api/export/results.xlsx", get(admin::export_results))
         .route("/api/export/results.pdf", get(admin::export_results_pdf))
+        .route("/api/export/ergebnisliste.csv", get(admin::export_ergebnisliste_csv))
         .route("/api/export/wiegekarten.pdf", get(admin::export_wiegekarten_pdf))
         .route("/api/export/urkunden.xlsx", get(admin::export_urkunden))
         .route("/api/export/urkunden.csv", get(admin::export_urkunden_csv))

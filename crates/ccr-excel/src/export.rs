@@ -10,14 +10,18 @@
 
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
 
-/// One results row: a completed category and its medallists' names.
+/// One results row: a completed category and its medallists (name + club).
 pub struct ResultRow {
     pub kategorie: String,
     pub typ: String,
     pub first: String,
+    pub first_club: String,
     pub second: String,
+    pub second_club: String,
     pub third1: String,
+    pub third1_club: String,
     pub third2: String,
+    pub third2_club: String,
 }
 
 /// One certificate row (mirrors edv COLUMNS = vorname/nachname/platz/klasse/verein).
@@ -105,6 +109,24 @@ pub fn results_xlsx(rows: &[ResultRow]) -> Result<Vec<u8>, XlsxError> {
         ws.write(r, 5, row.third2.as_str())?;
     }
     wb.save_to_buffer()
+}
+
+/// Results list as a merge-ready CSV (Affinity Publisher / LibreOffice data
+/// merge): comma-delimited, UTF-8, header = the merge field names. One row per
+/// completed category; medallist + club pairs. Mirrors `urkunden_csv`.
+pub fn ergebnisliste_csv(rows: &[ResultRow]) -> Result<String, csv::Error> {
+    let mut w = csv::Writer::from_writer(vec![]);
+    w.write_record([
+        "kategorie", "typ", "gold", "goldVerein", "silber", "silberVerein",
+        "bronze1", "bronze1Verein", "bronze2", "bronze2Verein",
+    ])?;
+    for r in rows {
+        w.write_record([
+            &r.kategorie, &r.typ, &r.first, &r.first_club, &r.second, &r.second_club,
+            &r.third1, &r.third1_club, &r.third2, &r.third2_club,
+        ])?;
+    }
+    Ok(String::from_utf8(w.into_inner().expect("csv writer")).expect("utf8"))
 }
 
 /// Urkunden as a merge-ready CSV (Affinity Publisher / LibreOffice data merge):
@@ -206,7 +228,10 @@ mod tests {
     fn results_xlsx_has_header_and_rows() {
         let rows = vec![ResultRow {
             kategorie: "m U15 -34kg".into(), typ: "ko".into(),
-            first: "X Y".into(), second: "A B".into(), third1: "C D".into(), third2: "E F".into(),
+            first: "X Y".into(), first_club: "".into(),
+            second: "A B".into(), second_club: "".into(),
+            third1: "C D".into(), third1_club: "".into(),
+            third2: "E F".into(), third2_club: "".into(),
         }];
         let bytes = results_xlsx(&rows).unwrap();
         let mut wb: Xlsx<_> = calamine::open_workbook_from_rs(Cursor::new(bytes)).unwrap();
@@ -214,5 +239,37 @@ mod tests {
         assert_eq!(range.get((0, 0)).unwrap().to_string(), "Kategorie");
         assert_eq!(range.get((1, 1)).unwrap().to_string(), "ko");
         assert_eq!(range.get((1, 2)).unwrap().to_string(), "X Y");
+    }
+
+    #[test]
+    fn ergebnisliste_csv_is_merge_ready() {
+        let rows = vec![
+            ResultRow {
+                kategorie: "w U15 -48kg".into(), typ: "lb".into(),
+                first: "Anna Adler".into(), first_club: "JC Berlin".into(),
+                second: "Bea Berger".into(), second_club: "JC Köln".into(),
+                third1: "Carla Carl".into(), third1_club: "Judo Club, Nord".into(),
+                third2: "".into(), third2_club: "".into(),
+            },
+            ResultRow {
+                kategorie: "m U13 +34kg".into(), typ: "ko".into(),
+                first: "".into(), first_club: "".into(),
+                second: "".into(), second_club: "".into(),
+                third1: "".into(), third1_club: "".into(),
+                third2: "".into(), third2_club: "".into(),
+            },
+        ];
+        let csv = ergebnisliste_csv(&rows).unwrap();
+        let mut lines = csv.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            "kategorie,typ,gold,goldVerein,silber,silberVerein,bronze1,bronze1Verein,bronze2,bronze2Verein"
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            "w U15 -48kg,lb,Anna Adler,JC Berlin,Bea Berger,JC Köln,Carla Carl,\"Judo Club, Nord\",,"
+        );
+        // an unfinished category stays a row with empty medallist fields.
+        assert_eq!(lines.next().unwrap(), "m U13 +34kg,ko,,,,,,,,");
     }
 }
