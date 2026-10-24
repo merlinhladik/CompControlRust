@@ -4,3 +4,4 @@ Cargo.lock.orig
 .env
 .DS_Store
 /crates/ccr-frontend/dist
+/tmp

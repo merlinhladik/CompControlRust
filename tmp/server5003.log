@@ -1,6 +1,0 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.35s
-     Running `target/debug/ccr-server`
-[2m2026-10-18T11:48:12.766613Z[0m [32m INFO[0m [2mccr_server[0m[2m:[0m connected to Postgres
-[2m2026-10-18T11:48:12.813687Z[0m [32m INFO[0m [2mccr_server[0m[2m:[0m schema migrations applied
-[2m2026-10-18T11:48:12.815463Z[0m [32m INFO[0m [2mccr_server[0m[2m:[0m serving frontend from crates/ccr-frontend/dist
-[2m2026-10-18T11:48:12.815527Z[0m [32m INFO[0m [2mccr_server[0m[2m:[0m CompControlRust listening on http://127.0.0.1:5003

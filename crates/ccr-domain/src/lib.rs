@@ -21,5 +21,6 @@ pub mod doppel_ko;
 pub mod repechage;
 pub mod standings;
 
-// TODO(Phase 4): port the frozen topology tables verbatim and re-run the
-// edv/tests oracle suite against this crate. Until then these modules are stubs.
+// Oracle coverage: the frozen topology tables (`_LB_STRUCTURE[3]/[4]`,
+// `_CANONICAL_32`, `_REPECHAGE_STRUCTURE[5]/[6]`) are ported into these modules
+// and pinned by the per-module unit tests (ported from edv/tests + JF).

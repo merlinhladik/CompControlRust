@@ -204,7 +204,8 @@ async fn handle_text(st: &AppState, text: &str, socket: &mut WebSocket) -> Resul
                     }
                     "rep" => {
                         tracing::info!(
-                            "STATUS_UPDATE finished phase=rep bracket={} — repechage deferred to Phase 4",
+                            "STATUS_UPDATE finished phase=rep bracket={} — no live repechage \
+                             propagation (unsupported draw size or main draw not seeded yet)",
                             fight.bracket_id
                         );
                     }

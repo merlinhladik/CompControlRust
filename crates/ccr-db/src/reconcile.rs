@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Load-time reconciliation for /api/matches (mirrors JF get_matches prelude):
-//! eager-materialize the full KO/repechage tree (TBD rows) + resolve WB byes.
-//! Idempotent. Mirrors `_ensure_ko_tree_materialized`, `_ensure_repe_tree_
-//! materialized`, `_resolve_pending_byes`. (LB/repe bye CASCADES — when a WB bye
-//! leaves a dead loser slot — are deferred; full brackets need them rarely.)
+//! eager-materialize the full KO/repechage tree (TBD rows) + resolve WB byes +
+//! the LB bye cascade (`resolve_lb_byes`, JF `_resolve_lb_byes`). Idempotent.
+//! Mirrors `_ensure_ko_tree_materialized`, `_ensure_repe_tree_materialized`,
+//! `_resolve_pending_byes`, `_resolve_lb_byes`. (Only the REPECHAGE bye cascade
+//! is still deferred; full brackets need it rarely.)
 
 use std::collections::HashMap;
 

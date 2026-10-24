@@ -501,3 +501,41 @@ Verbleibende kleinere Klärungen, die NICHT die Architektur forken:
 
 > **Nächster Schritt:** Phase 0.5 (Excel-Spike) — die Go/No-Go-Vorbedingung für
 > die 100-%-Rust-Excel-Entscheidung. Danach Phase 1.
+> *(überholt — Phase 0.5–5 sind umgesetzt; aktueller Stand unten, Abschnitt 7.)*
+
+## 7. Offene Punkte — Stand 2026-10-19 (alles committet, c04d76b)
+
+Empfohlene Reihenfolge: A → B (je nach Turnier-Termin) → C (Orakel-Runde
+VOR dem Cutover).
+
+**A. Sofort / Betrieblich**
+- **Docker-Image `ccr_web` (Port 5001) ist VOR Slice 21–25 gebaut.** Compose-Pfad
+  nur nutzen nach: `docker compose build web && docker compose up -d web`.
+  (Alternativ lief ein nohup-Dev-Server auf 5002 gegen `ccr_db`:5433 — bei
+  Bedarf neu starten, nicht Teil des Repo-Zustands.)
+- **Hygiene:** `tmp/server500*.log` versehentlich committet; `tmp/` in `.gitignore`
+  ergänzen (Einzeiler).
+
+**B. Funktionale Folgenden (bewusst aufgeschoben, Merlin-Entscheidungen)**
+- **Platzierungen 4+** — „Auswertungen" zeigt nur 1./2./3./3. pro Verein × Klasse
+  (Slice 25). Platz 4+ = eigenes späteres Thema.
+- **QR-Bild auf den Wiegekarten** (Slice 20 ⚠) — `id` liegt als Merge-/QR-Wert
+  im CSV, gerendert wird noch nichts. Entwurf: Affinity-Vorlage (Data Merge)
+  ODER server-seitige QR-Crate (neuer Export `/api/export/wiegekarten-qr.pdf`?).
+- **Live-UI-Rückbau-Entscheid** — Slice 21 hat Mattenliste/Baum/Live-Indikator aus
+  dem Frontend genommen (WS-Client weg). Server-Endpunkte `/ws` +
+  `/api/matches` bleiben (Ipponboard-Vertrag). Sobald der Turnierbetrieb mit
+  Matten komplett über CCR läuft, muss die Live-Ansicht zurück (Phase-3-Exit:
+  „Kampfrichter/Anzeige läuft komplett über CCR"). Bis dahin: Scoring via JF.
+- **Finaler Cutover (Phase-5-Exit)** — edv + JF sind noch aktiv; Risiko 5
+  (Doppel-Schreiber auf einer DB) ⇒ harter Cutover pro Matte/Turnier, danach
+  edv + JF abschalten.
+
+**C. Zertifizierungs-/Orakel-Schulden (vor Cutover abarbeiten)**
+- **64er Doppel-KO — EXTRAPOLIERT, NICHT zertifiziert** (`ccr-domain::ko_big`).
+- **Best-of-three-Pfad** portiert, aber nie mit echten 2er-Pool-Testdaten gelaufen;
+  **Doppelpool-KO-Stage-Erzeugung** noch offen.
+- **Repechage-Bronze-Cross auf dem physischen Blatt verifizieren**
+  (CLAUDE.md: „Merlin to confirm") — fließt in `ccr-domain::repechage` ein.
+- **Pixelgenaue DJB-Druckvorlagen** (Phase-4/5-Rest) — durch das Affinity-CSV-
+  Procedere (Slice 20) faktisch ersetzt; nur noch Nice-to-have.
